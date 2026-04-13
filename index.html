@@ -176,6 +176,7 @@ const ADAPT = {
   sampleMs: 0,
   frames: 0,
   lowHits: 0,
+  highHits: 0,
   enabled: true
 };
 function applyQualityLevel(level) {
@@ -190,10 +191,25 @@ function samplePerformance(dt) {
   ADAPT.frames++;
   if (ADAPT.sampleMs < 1800) return;
   const fps = ADAPT.frames * 1000 / ADAPT.sampleMs;
-  if (fps < 50 && ADAPT.level < QUALITY_PROFILES.length - 1) ADAPT.lowHits++;
-  else if (fps > 56) ADAPT.lowHits = 0;
+  const canDownshift = ADAPT.level < QUALITY_PROFILES.length - 1;
+  const canUpshift = ADAPT.level > (LOW_POWER ? 1 : 0);
+  if (fps < 50 && canDownshift) {
+    ADAPT.lowHits++;
+    ADAPT.highHits = 0;
+  } else if (fps > 57 && canUpshift) {
+    ADAPT.highHits++;
+    ADAPT.lowHits = 0;
+  } else {
+    ADAPT.lowHits = 0;
+    ADAPT.highHits = 0;
+  }
   if (ADAPT.lowHits >= 2) {
     applyQualityLevel(ADAPT.level + 1);
+    ADAPT.lowHits = 0;
+    ADAPT.highHits = 0;
+  } else if (ADAPT.highHits >= 3) {
+    applyQualityLevel(ADAPT.level - 1);
+    ADAPT.highHits = 0;
     ADAPT.lowHits = 0;
   }
   ADAPT.sampleMs = 0;
