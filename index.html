@@ -164,9 +164,22 @@ const cx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 let lastNow = 0;
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const LOW_POWER = IS_TOUCH && (((navigator.hardwareConcurrency || 4) <= 6) || ((navigator.deviceMemory || 4) <= 4));
+const PERF = {
+  maxDpr: LOW_POWER ? 1.25 : 2,
+  stars: LOW_POWER ? 160 : 300,
+  dust: LOW_POWER ? 2 : 5,
+  trail: LOW_POWER ? 14 : 28,
+  ringBlur: LOW_POWER ? 0 : 8,
+  starGlow: !LOW_POWER,
+  nodeGlow: !LOW_POWER,
+  screenPulse: !LOW_POWER,
+  dustFx: !LOW_POWER,
+  cloudFx: !LOW_POWER
+};
 
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  DPR = Math.min(window.devicePixelRatio || 1, PERF.maxDpr);
   W = window.innerWidth;
   H = window.innerHeight;
   cv.width = W * DPR;
@@ -607,7 +620,8 @@ function updateCam() {
 }
 
 function burst(x, y, col, n, spd) {
-  for (let i = 0; i < n; i++) {
+  const total = LOW_POWER ? Math.max(4, Math.round(n * .55)) : n;
+  for (let i = 0; i < total; i++) {
     const a = Math.random() * Math.PI * 2;
     const s = spd * (.4 + Math.random() * .9);
     parts.push({
@@ -630,7 +644,7 @@ function addFloat(x, y, txt, col, size = 15) {
 }
 
 const STAR_LAYERS = [.08, .18, .34, .58];
-const STARS = Array.from({ length: 300 }, (_, i) => ({
+const STARS = Array.from({ length: PERF.stars }, (_, i) => ({
   lx: Math.random() * 7000 - 3500,
   ly: Math.random() * 7000 - 3500,
   r: i < 44 ? 1.2 + Math.random() * 1.8 : .35 + Math.random() * 1.3,
@@ -640,7 +654,7 @@ const STARS = Array.from({ length: 300 }, (_, i) => ({
   hue: 185 + Math.random() * 120,
   hot: Math.random() < .16
 }));
-const DUST = Array.from({ length: 5 }, () => ({
+const DUST = Array.from({ length: PERF.dust }, () => ({
   x: Math.random(),
   y: Math.random(),
   r: .18 + Math.random() * .3,
@@ -700,16 +714,18 @@ function drawBg() {
     cx.fillRect(0, 0, W, H);
   }
 
-  DUST.forEach((dust, i) => {
-    const px = W * dust.x + Math.sin(bgTick * dust.drift + i) * W * .08 + CAM.x * (.015 + i * .002);
-    const py = H * dust.y + Math.cos(bgTick * (dust.drift + .2) + i * .7) * H * .1 + CAM.y * (.022 + i * .003);
-    const g = cx.createRadialGradient(px, py, 0, px, py, Math.min(W, H) * dust.r);
-    g.addColorStop(0, `hsla(${dust.hue}, 90%, 72%, ${.05 + speed * .02 + feverAmt * .03})`);
-    g.addColorStop(.45, `hsla(${dust.hue + 24}, 85%, 55%, ${.018 + speed * .016})`);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    cx.fillStyle = g;
-    cx.fillRect(px - Math.min(W, H) * dust.r, py - Math.min(W, H) * dust.r, Math.min(W, H) * dust.r * 2, Math.min(W, H) * dust.r * 2);
-  });
+  if (PERF.dustFx) {
+    DUST.forEach((dust, i) => {
+      const px = W * dust.x + Math.sin(bgTick * dust.drift + i) * W * .08 + CAM.x * (.015 + i * .002);
+      const py = H * dust.y + Math.cos(bgTick * (dust.drift + .2) + i * .7) * H * .1 + CAM.y * (.022 + i * .003);
+      const g = cx.createRadialGradient(px, py, 0, px, py, Math.min(W, H) * dust.r);
+      g.addColorStop(0, `hsla(${dust.hue}, 90%, 72%, ${.05 + speed * .02 + feverAmt * .03})`);
+      g.addColorStop(.45, `hsla(${dust.hue + 24}, 85%, 55%, ${.018 + speed * .016})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      cx.fillStyle = g;
+      cx.fillRect(px - Math.min(W, H) * dust.r, py - Math.min(W, H) * dust.r, Math.min(W, H) * dust.r * 2, Math.min(W, H) * dust.r * 2);
+    });
+  }
 
   STARS.forEach((s, i) => {
     s.tw += s.ts;
@@ -730,7 +746,7 @@ function drawBg() {
       cx.translate(px, py);
       cx.rotate(Math.atan2(vy || .0001, vx || 1));
       cx.globalAlpha = twinkle;
-      if (bright) {
+      if (bright && PERF.starGlow) {
         cx.shadowBlur = s.hot ? 11 + s.r * 4 : 4 + s.r;
         cx.shadowColor = s.hot ? `hsla(${s.hue}, 90%, 72%, .85)` : 'rgba(255,255,255,.72)';
       }
@@ -745,7 +761,7 @@ function drawBg() {
     }
     cx.globalAlpha = twinkle;
     cx.fillStyle = s.hot ? `hsla(${s.hue}, 90%, 82%, ${.72 + twinkle * .28})` : `rgba(255,255,255,${.52 + twinkle * .42})`;
-    if (bright) {
+    if (bright && PERF.starGlow) {
       cx.save();
       cx.shadowBlur = s.hot ? 11 + s.r * 4 : 4 + s.r;
       cx.shadowColor = s.hot ? `hsla(${s.hue}, 90%, 72%, .85)` : 'rgba(255,255,255,.72)';
@@ -768,21 +784,23 @@ function drawBg() {
   cx.fillRect(0, 0, W, H);
   cx.restore();
 
-  cx.save();
-  cx.globalCompositeOperation = 'screen';
-  const pulseGlow = cx.createRadialGradient(W * .5, H * .5, 0, W * .5, H * .5, Math.max(W, H) * .9);
-  pulseGlow.addColorStop(0, `rgba(255,255,255,${.012 + breathe * .018})`);
-  pulseGlow.addColorStop(.45, `rgba(96,197,255,${.008 + breathe * .012})`);
-  pulseGlow.addColorStop(1, 'rgba(0,0,0,0)');
-  cx.fillStyle = pulseGlow;
-  cx.fillRect(0, 0, W, H);
-  cx.restore();
+  if (PERF.screenPulse) {
+    cx.save();
+    cx.globalCompositeOperation = 'screen';
+    const pulseGlow = cx.createRadialGradient(W * .5, H * .5, 0, W * .5, H * .5, Math.max(W, H) * .9);
+    pulseGlow.addColorStop(0, `rgba(255,255,255,${.012 + breathe * .018})`);
+    pulseGlow.addColorStop(.45, `rgba(96,197,255,${.008 + breathe * .012})`);
+    pulseGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    cx.fillStyle = pulseGlow;
+    cx.fillRect(0, 0, W, H);
+    cx.restore();
+  }
 }
 
 function C(x, y, r, col, a = 1, blur = 0) {
   cx.save();
   cx.globalAlpha = a;
-  if (blur) {
+  if (blur && PERF.nodeGlow) {
     cx.shadowColor = col;
     cx.shadowBlur = blur;
   }
@@ -795,8 +813,10 @@ function C(x, y, r, col, a = 1, blur = 0) {
 function A(x, y, r, col, lw, a = 1, a1 = 0, a2 = Math.PI * 2, dash = []) {
   cx.save();
   cx.globalAlpha = a;
-  cx.shadowColor = col;
-  cx.shadowBlur = 8;
+  if (PERF.ringBlur > 0) {
+    cx.shadowColor = col;
+    cx.shadowBlur = PERF.ringBlur;
+  }
   cx.setLineDash(dash);
   cx.beginPath();
   cx.arc(x, y, r, a1, a2);
@@ -811,8 +831,10 @@ function drawStarShape(x, y, r, col, a = 1, rot = 0) {
   cx.globalAlpha = a;
   cx.translate(x, y);
   cx.rotate(rot);
-  cx.shadowColor = col;
-  cx.shadowBlur = r * 1.5;
+  if (PERF.nodeGlow) {
+    cx.shadowColor = col;
+    cx.shadowBlur = r * 1.5;
+  }
   cx.beginPath();
   for (let i = 0; i < 10; i++) {
     const ang = i * Math.PI / 5 - Math.PI / 2;
@@ -826,6 +848,28 @@ function drawStarShape(x, y, r, col, a = 1, rot = 0) {
   cx.restore();
 }
 function drawPlanet(x, y, r, col, a = 1) {
+  if (LOW_POWER) {
+    C(x, y, r * 1.02, col, a * .22);
+    C(x, y, r, col, a);
+    cx.save();
+    cx.translate(x, y);
+    cx.rotate(PL.spin);
+    cx.globalAlpha = a * .64;
+    cx.fillStyle = 'rgba(255,255,255,.72)';
+    cx.beginPath();
+    cx.ellipse(-r * .2, -r * .24, r * .34, r * .15, .3, 0, Math.PI * 2);
+    cx.fill();
+    if (PLAYER.shield) {
+      cx.globalAlpha = .42;
+      cx.strokeStyle = '#7fdcff';
+      cx.lineWidth = 1.8;
+      cx.beginPath();
+      cx.arc(0, 0, r * 1.36, 0, Math.PI * 2);
+      cx.stroke();
+    }
+    cx.restore();
+    return;
+  }
   const g = cx.createRadialGradient(x, y, r * .15, x, y, r * 3.6);
   g.addColorStop(0, col + 'dd');
   g.addColorStop(.35, col + '55');
@@ -889,17 +933,19 @@ function drawNode(n, role, routeLabel = '') {
   const alpha = [1, .66, .18][role];
   const [c0, c1, c2] = n.pal;
   if (role === 0) {
-    const ng = cx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r * 3.8);
-    ng.addColorStop(0, c2 + '88');
-    ng.addColorStop(.55, c2 + '22');
-    ng.addColorStop(1, c2 + '00');
-    cx.save();
-    cx.globalAlpha = .14;
-    cx.beginPath();
-    cx.arc(n.x, n.y, n.r * 3.8, 0, Math.PI * 2);
-    cx.fillStyle = ng;
-    cx.fill();
-    cx.restore();
+    if (PERF.nodeGlow) {
+      const ng = cx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r * 3.8);
+      ng.addColorStop(0, c2 + '88');
+      ng.addColorStop(.55, c2 + '22');
+      ng.addColorStop(1, c2 + '00');
+      cx.save();
+      cx.globalAlpha = .14;
+      cx.beginPath();
+      cx.arc(n.x, n.y, n.r * 3.8, 0, Math.PI * 2);
+      cx.fillStyle = ng;
+      cx.fill();
+      cx.restore();
+    }
   }
 
   const dash = role === 1 ? [8, 6] : role === 2 ? [3, 7] : [];
@@ -914,7 +960,7 @@ function drawNode(n, role, routeLabel = '') {
     const centre = zoneCenter(n);
     const pulse = .28 + .12 * Math.sin(performance.now() * .006);
     const assist = currentMode();
-    if (assist.cloudAlpha > 0) {
+    if (assist.cloudAlpha > 0 && PERF.cloudFx) {
       const cloudR = n.r + assist.catchBuffer;
       const cloud = cx.createRadialGradient(n.x, n.y, Math.max(0, n.r - 4), n.x, n.y, cloudR + 8);
       cloud.addColorStop(0, 'rgba(0,0,0,0)');
@@ -943,9 +989,11 @@ function drawNode(n, role, routeLabel = '') {
       cx.restore();
     }
     cx.save();
-    cx.globalAlpha = pulse;
-      cx.shadowColor = c0;
-      cx.shadowBlur = 24;
+      cx.globalAlpha = pulse;
+      if (PERF.nodeGlow) {
+        cx.shadowColor = c0;
+        cx.shadowBlur = 24;
+      }
       cx.strokeStyle = c0;
       cx.lineWidth = 5.8;
       cx.lineCap = 'round';
@@ -959,8 +1007,10 @@ function drawNode(n, role, routeLabel = '') {
       cx.save();
       cx.globalAlpha = .38 + pulse * .26;
       cx.strokeStyle = n.kind === 'gate' ? '#ffd86e' : n.kind === 'shield' ? '#7fdcff' : n.kind === 'fever' ? '#ff9dc8' : '#ffe8aa';
-      cx.shadowColor = cx.strokeStyle;
-      cx.shadowBlur = 22;
+      if (PERF.nodeGlow) {
+        cx.shadowColor = cx.strokeStyle;
+        cx.shadowBlur = 22;
+      }
       cx.lineWidth = 4.8;
       cx.lineCap = 'round';
       cx.beginPath();
@@ -971,8 +1021,8 @@ function drawNode(n, role, routeLabel = '') {
 
     const gx = n.x + Math.cos(centre) * n.r;
     const gy = n.y + Math.sin(centre) * n.r;
-    C(gx, gy, n.pr * .8, c0, .2, 14);
-    C(gx, gy, n.pr * .44, '#fff', .14, 8);
+    C(gx, gy, n.pr * .8, c0, .2, LOW_POWER ? 0 : 14);
+    C(gx, gy, n.pr * .44, '#fff', .14, LOW_POWER ? 0 : 8);
 
     const label = n.kind === 'gate' ? 'RISK GATE' :
       n.kind === 'shield' ? 'SHIELD' :
@@ -1008,8 +1058,10 @@ function drawNode(n, role, routeLabel = '') {
       const hue = 20 - ratio * 18;
       cx.save();
       cx.globalAlpha = w * .5;
-      cx.shadowColor = `hsl(${hue},100%,62%)`;
-      cx.shadowBlur = 8;
+      if (PERF.nodeGlow) {
+        cx.shadowColor = `hsl(${hue},100%,62%)`;
+        cx.shadowBlur = 8;
+      }
       cx.strokeStyle = `hsl(${hue},100%,62%)`;
       cx.lineWidth = 3;
       cx.beginPath();
@@ -1022,8 +1074,10 @@ function drawNode(n, role, routeLabel = '') {
     const ratio = Math.min(1, comboTimer / COMBO_TIMER_BASE);
     cx.save();
     cx.globalAlpha = .24 + (.3 + .18 * Math.sin(performance.now() * .01)) * .2;
-    cx.shadowColor = '#ff486d';
-    cx.shadowBlur = 14;
+    if (PERF.nodeGlow) {
+      cx.shadowColor = '#ff486d';
+      cx.shadowBlur = 14;
+    }
     cx.strokeStyle = '#ff486d';
     cx.lineWidth = 2.4;
     cx.beginPath();
@@ -1036,10 +1090,12 @@ function drawNode(n, role, routeLabel = '') {
 function draw() {
   cx.save();
   cx.scale(DPR, DPR);
-  const depthPulse = 1 + sceneBreathStrength() * .0065;
-  cx.translate(W * .5, H * .5);
-  cx.scale(depthPulse, depthPulse);
-  cx.translate(-W * .5, -H * .5);
+  if (PERF.screenPulse) {
+    const depthPulse = 1 + sceneBreathStrength() * .0065;
+    cx.translate(W * .5, H * .5);
+    cx.scale(depthPulse, depthPulse);
+    cx.translate(-W * .5, -H * .5);
+  }
   const sx = shake > 0 ? (Math.random() - .5) * shake * 7 : 0;
   const sy = shake > 0 ? (Math.random() - .5) * shake * 7 : 0;
   cx.translate(sx, sy);
@@ -1114,7 +1170,7 @@ function draw() {
       p.life -= p.d;
       if (p.life <= 0) return false;
       if (p.star) drawStarShape(p.x, p.y, p.r * p.life, p.col, p.life * .9, p.life * 6);
-      else C(p.x, p.y, p.r * Math.max(.1, p.life), p.col, p.life * .85, 5);
+      else C(p.x, p.y, p.r * Math.max(.1, p.life), p.col, p.life * .85, LOW_POWER ? 0 : 5);
       return true;
     });
     floats = floats.filter(f => {
@@ -1127,8 +1183,10 @@ function draw() {
       cx.font = `700 ${f.size + (1 - f.life) * 4}px 'Avenir Next','Segoe UI',sans-serif`;
       cx.textAlign = 'center';
       cx.textBaseline = 'middle';
-      cx.shadowColor = f.col;
-      cx.shadowBlur = 7;
+      if (PERF.nodeGlow) {
+        cx.shadowColor = f.col;
+        cx.shadowBlur = 7;
+      }
       cx.fillText(f.txt, f.x, f.y);
       cx.restore();
       return true;
@@ -1509,7 +1567,7 @@ function update(dt) {
     PL.y += PL.vy;
     PL.spin += .24;
     PL.trail.unshift({ x: PL.x, y: PL.y });
-    if (PL.trail.length > 28) PL.trail.pop();
+    if (PL.trail.length > PERF.trail) PL.trail.pop();
 
     if (nxt && !locked) {
       const dx = PL.x - nxt.x;
