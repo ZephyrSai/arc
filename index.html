@@ -6,7 +6,7 @@
 <title>Zephyr Arc</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:none}
-html,body{width:100%;height:100%;overflow:hidden;background:#02030b;font-family:"Avenir Next","Segoe UI","Trebuchet MS",sans-serif;color:#fff;user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#02030b;font-family:"Avenir Next","Segoe UI","Trebuchet MS",sans-serif;color:#fff;user-select:none;overscroll-behavior:none}
 canvas{display:block;position:fixed;inset:0}
 #hud{position:fixed;inset:0;pointer-events:none;z-index:10}
 #sc-wrap{position:absolute;top:18px;left:50%;transform:translateX(-50%);text-align:center;line-height:1}
@@ -34,6 +34,9 @@ canvas{display:block;position:fixed;inset:0}
 #key-hint{position:absolute;bottom:48px;right:16px;font-size:.52rem;letter-spacing:.1em;text-transform:uppercase;opacity:.23;line-height:1.72;text-align:right}
 #route-hint{position:absolute;bottom:84px;left:50%;transform:translateX(-50%);font-size:.55rem;letter-spacing:.14em;text-transform:uppercase;opacity:0;transition:opacity .3s}
 #route-hint.show{opacity:.32}
+#touch-bar{position:absolute;right:max(12px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));display:none;gap:8px;pointer-events:all}
+.touch-btn{min-width:44px;height:44px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(7,10,24,.56);backdrop-filter:blur(16px);color:rgba(255,255,255,.82);font:700 .66rem/1 "Avenir Next","Segoe UI",sans-serif;letter-spacing:.12em;text-transform:uppercase}
+.touch-btn:active{transform:scale(.96)}
 
 .scr{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(3,4,14,.88);z-index:30;backdrop-filter:blur(16px);transition:opacity .3s;padding:24px;text-align:center}
 .scr.off{display:none}
@@ -71,6 +74,20 @@ canvas{display:block;position:fixed;inset:0}
   #sc-num{font-size:2.35rem}
   #route-hint{bottom:96px;font-size:.5rem}
 }
+@media (max-width:680px),(pointer:coarse){
+  #run-wrap{top:max(12px,env(safe-area-inset-top));left:max(10px,env(safe-area-inset-left));max-width:min(66vw,260px);gap:6px}
+  .hud-card{padding:7px 9px;border-radius:12px;background:rgba(6,8,21,.34);backdrop-filter:blur(10px)}
+  .hud-v{font-size:.66rem;line-height:1.24}
+  .pill{padding:5px 8px;font-size:.5rem}
+  #best-wrap{top:max(12px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right))}
+  #best-num{font-size:.82rem}
+  #sc-wrap{top:max(10px,env(safe-area-inset-top));width:100%;padding:0 88px}
+  #sc-num{font-size:2.1rem}
+  #hint{bottom:max(74px,calc(env(safe-area-inset-bottom) + 60px));font-size:.58rem;letter-spacing:.12em;max-width:80vw;white-space:normal;text-align:center}
+  #route-hint{bottom:max(112px,calc(env(safe-area-inset-bottom) + 98px));font-size:.48rem;max-width:82vw;text-align:center}
+  #key-hint{display:none}
+  #touch-bar{display:flex}
+}
 </style>
 </head>
 <body>
@@ -93,6 +110,10 @@ canvas{display:block;position:fixed;inset:0}
   <div id="route-hint">Arrow Left / Right · A / D to pick a route</div>
   <div id="combo-el"></div>
   <div id="key-hint">Space / Enter — start or launch<br>Left / Right — route choice<br>R — instant restart</div>
+  <div id="touch-bar">
+    <button class="touch-btn" id="touch-pause" aria-label="Pause game">Pause</button>
+    <button class="touch-btn" id="touch-restart" aria-label="Restart run">Retry</button>
+  </div>
 </div>
 
 <div class="scr" id="s-title">
@@ -142,6 +163,7 @@ const cv = document.getElementById('cv');
 const cx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 let lastNow = 0;
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -155,7 +177,7 @@ function resize() {
 resize();
 window.addEventListener('resize', () => {
   resize();
-  if (GS === 'play') quickRestart();
+  if (GS === 'play' || GS === 'paused' || GS === 'dying') updateCam();
 });
 
 const STORAGE_KEY = 'sf7';
@@ -297,6 +319,10 @@ function buildRunMeta() {
 }
 buildRunMeta();
 updateModeButtons();
+if (IS_TOUCH) {
+  document.getElementById('hint').textContent = 'Tap to launch';
+  document.getElementById('route-hint').textContent = 'Tap left or right half to pick a route';
+}
 
 function missionStatusText() {
   if (!RUN.mission) return 'Stay moving.';
@@ -1891,6 +1917,17 @@ cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   handlePointer(e.clientX);
 });
+['touchstart','touchmove','gesturestart','gesturechange'].forEach(type => {
+  document.addEventListener(type, e => {
+    e.preventDefault();
+  }, { passive:false });
+});
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    resize();
+    if (GS === 'play' || GS === 'paused' || GS === 'dying') updateCam();
+  }, 120);
+});
 document.addEventListener('keydown', e => {
   Music.unlock();
   if (e.code === 'Escape') {
@@ -1948,6 +1985,28 @@ document.getElementById('b-pause-menu').addEventListener('click', goToMenu);
 document.getElementById('b-hs1').addEventListener('click', showHS);
 document.getElementById('b-hs2').addEventListener('click', showHS);
 document.getElementById('hs-x').addEventListener('click', () => document.getElementById('hsp').classList.remove('open'));
+document.getElementById('touch-pause').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+document.getElementById('touch-restart').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+document.getElementById('touch-pause').addEventListener('click', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  Music.unlock();
+  if (GS === 'play') pauseGame();
+  else if (GS === 'paused') resumeGame();
+  else beginFromCurrentScreen();
+});
+document.getElementById('touch-restart').addEventListener('click', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  Music.unlock();
+  quickRestart();
+});
 document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     save.launchMode = btn.dataset.mode;
