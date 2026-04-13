@@ -1908,6 +1908,7 @@ function handlePointer(x) {
   Music.unlock();
   if (GS === 'play' && routeChoice && !PL.fly) {
     setRouteSelection(x < W / 2 ? 0 : 1);
+    if (IS_TOUCH) doLaunch();
     return;
   }
   if (GS === 'play') doLaunch();
