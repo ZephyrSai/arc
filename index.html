@@ -1917,11 +1917,18 @@ cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   handlePointer(e.clientX);
 });
-['touchstart','touchmove','gesturestart','gesturechange'].forEach(type => {
-  document.addEventListener(type, e => {
-    e.preventDefault();
-  }, { passive:false });
-});
+function isInteractiveTarget(node) {
+  return !!node?.closest?.('button, a, input, select, textarea, [data-allow-touch]');
+}
+document.addEventListener('touchmove', e => {
+  if (!isInteractiveTarget(e.target)) e.preventDefault();
+}, { passive:false });
+document.addEventListener('gesturestart', e => {
+  if (!isInteractiveTarget(e.target)) e.preventDefault();
+}, { passive:false });
+document.addEventListener('gesturechange', e => {
+  if (!isInteractiveTarget(e.target)) e.preventDefault();
+}, { passive:false });
 window.addEventListener('orientationchange', () => {
   setTimeout(() => {
     resize();
