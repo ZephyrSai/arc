@@ -177,7 +177,7 @@ const ADAPT = {
   frames: 0,
   lowHits: 0,
   highHits: 0,
-  enabled: true
+  enabled: IS_TOUCH
 };
 function applyQualityLevel(level) {
   const next = Math.max(0, Math.min(QUALITY_PROFILES.length - 1, level));
@@ -229,6 +229,9 @@ resize();
 window.addEventListener('resize', () => {
   resize();
   if (GS === 'play' || GS === 'paused' || GS === 'dying') updateCam();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !IS_TOUCH && ADAPT.level !== 0) applyQualityLevel(0);
 });
 
 const STORAGE_KEY = 'sf7';
