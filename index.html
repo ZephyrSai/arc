@@ -672,8 +672,23 @@ function maybeSpawnRouteFork() {
   const current = pool[pidx];
   const active = getNextNode();
   if (!current || !active || active.kind === 'boss') return;
+  const minCurrentGap = current.r + active.r + Math.min(W, H) * .16;
+  if (Math.hypot(active.x - current.x, active.y - current.y) < minCurrentGap) return;
+  let alt = null;
+  const minSiblingGap = active.r + Math.min(W, H) * .18;
+  const minAltCurrentGap = current.r + Math.min(W, H) * .18;
+  for (let i = 0; i < 10; i++) {
+    const candidate = genNode(current, score + 1.8, current._tDir + .8 + (Math.random() - .5) * .42);
+    const gapToCurrent = Math.hypot(candidate.x - current.x, candidate.y - current.y);
+    const gapToActive = Math.hypot(candidate.x - active.x, candidate.y - active.y);
+    if (gapToCurrent >= minAltCurrentGap && gapToActive >= minSiblingGap) {
+      alt = candidate;
+      break;
+    }
+  }
+  if (!alt) return;
   routeChoice = {
-    alt: genNode(current, score + 1.8, current._tDir + .8),
+    alt,
     selected: 0
   };
   updateStatusHUD();
@@ -1112,8 +1127,8 @@ function renderPlayerState() {
     y: lerp(PL.py ?? PL.y, PL.y, renderAlpha)
   };
 }
-function drawNode(n, role, routeLabel = '') {
-  const alpha = [1, .66, .18][role];
+function drawNode(n, role, routeLabel = '', routeSelected = false) {
+  const alpha = routeLabel ? (routeSelected ? .96 : .82) : [1, .66, .18][role];
   const [c0, c1, c2] = n.pal;
   const angle = lerpAngle(n.pAngle ?? n.angle, n.angle, renderAlpha);
   const gateAngle = lerpAngle(n.pGateAngle ?? n.gateAngle, n.gateAngle, renderAlpha);
@@ -1134,7 +1149,7 @@ function drawNode(n, role, routeLabel = '') {
     }
   }
 
-  const dash = role === 1 ? [8, 6] : role === 2 ? [3, 7] : [];
+  const dash = routeLabel ? (routeSelected ? [10, 5] : [4, 7]) : role === 1 ? [8, 6] : role === 2 ? [3, 7] : [];
   A(n.x, n.y, n.r, c0, role === 0 ? 2.6 : 1.9, alpha * .95, 0, Math.PI * 2, dash);
   A(n.x, n.y, n.r, '#ffffff', role === 0 ? .7 : .5, alpha * .36, 0, Math.PI * 2, dash);
   if (role < 2) A(n.x, n.y, n.r + 4, c0, role === 0 ? 1.2 : .9, alpha * .34, 0, Math.PI * 2, []);
@@ -1227,11 +1242,37 @@ function drawNode(n, role, routeLabel = '') {
     }
     if (routeLabel) {
       cx.save();
-      cx.globalAlpha = .56;
+      const routePulse = .72 + .2 * Math.sin(simTime * 8 + (routeLabel === 'A' ? 0 : 1.3));
+      cx.globalAlpha = routeSelected ? .46 + routePulse * .18 : .26 + routePulse * .12;
+      cx.strokeStyle = routeSelected ? '#ffd86e' : 'rgba(175,235,255,.78)';
+      cx.lineWidth = routeSelected ? 2.4 : 1.3;
+      cx.shadowColor = routeSelected ? '#ffd86e' : '#9ce7ff';
+      cx.shadowBlur = routeSelected ? 22 : 12;
+      cx.beginPath();
+      cx.arc(n.x, n.y, n.r * .54, 0, Math.PI * 2);
+      cx.stroke();
+      cx.globalAlpha = routeSelected ? .84 : .68;
       cx.fillStyle = '#fff';
-      cx.font = "700 12px 'Avenir Next','Segoe UI',sans-serif";
+      cx.font = `800 ${Math.round(n.r * .56)}px 'Avenir Next','Segoe UI',sans-serif`;
       cx.textAlign = 'center';
-      cx.fillText(routeLabel, n.x, n.y + n.r + 18);
+      cx.textBaseline = 'middle';
+      cx.fillText(routeLabel, n.x, n.y + 1);
+      cx.globalAlpha = routeSelected ? .84 : .62;
+      cx.font = "700 12px 'Avenir Next','Segoe UI',sans-serif";
+      cx.fillStyle = routeSelected ? '#ffd86e' : '#bfefff';
+      cx.fillText(routeLabel, n.x, n.y + n.r + 20);
+      cx.restore();
+    }
+    if (routeLabel && routeSelected) {
+      cx.save();
+      cx.globalAlpha = .24 + .1 * Math.sin(simTime * 7);
+      cx.strokeStyle = '#ffd86e';
+      cx.lineWidth = 4.8;
+      cx.shadowColor = '#ffd86e';
+      cx.shadowBlur = 26;
+      cx.beginPath();
+      cx.arc(n.x, n.y, n.r + 9, gateAngle - n.capArc * .42, gateAngle + n.capArc * .42);
+      cx.stroke();
       cx.restore();
     }
   }
@@ -1297,8 +1338,8 @@ function draw() {
       const node = pool[pidx + ri];
       if (node) drawNode(node, ri);
     }
-    if (routeChoice && getAltNode()) drawNode(getAltNode(), 2, 'B');
-    if (routeChoice && getNextNode()) drawNode(getNextNode(), 1, 'A');
+    if (routeChoice && getAltNode()) drawNode(getAltNode(), 2, 'B', routeChoice.selected === 1);
+    if (routeChoice && getNextNode()) drawNode(getNextNode(), 1, 'A', routeChoice.selected === 0);
 
     for (const r of rings) {
       if (r.life > 0) A(r.x, r.y, r.r, r.col, r.lw, r.life * .76);
