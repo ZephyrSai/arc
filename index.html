@@ -660,7 +660,7 @@ function addFloat(x, y, txt, col, size = 15) {
 }
 
 const STAR_LAYERS = [.08, .18, .34, .58];
-const STARS = Array.from({ length: QUALITY_PROFILES[0].stars }, (_, i) => ({
+const STARS = Array.from({ length: GRAPHICS_CONFIG.high.stars }, (_, i) => ({
   lx: Math.random() * 7000 - 3500,
   ly: Math.random() * 7000 - 3500,
   r: i < 44 ? 1.2 + Math.random() * 1.8 : .35 + Math.random() * 1.3,
@@ -670,7 +670,7 @@ const STARS = Array.from({ length: QUALITY_PROFILES[0].stars }, (_, i) => ({
   hue: 185 + Math.random() * 120,
   hot: Math.random() < .16
 }));
-const DUST = Array.from({ length: QUALITY_PROFILES[0].dust }, () => ({
+const DUST = Array.from({ length: GRAPHICS_CONFIG.high.dust }, () => ({
   x: Math.random(),
   y: Math.random(),
   r: .18 + Math.random() * .3,
@@ -2009,128 +2009,4 @@ document.addEventListener('touchmove', e => {
 document.addEventListener('gesturestart', e => {
   if (!isInteractiveTarget(e.target)) e.preventDefault();
 }, { passive:false });
-document.addEventListener('gesturechange', e => {
-  if (!isInteractiveTarget(e.target)) e.preventDefault();
-}, { passive:false });
-window.addEventListener('orientationchange', () => {
-  setTimeout(() => {
-    resize();
-    if (GS === 'play' || GS === 'paused' || GS === 'dying') updateCam();
-  }, 120);
-});
-document.addEventListener('keydown', e => {
-  Music.unlock();
-  if (e.code === 'Escape') {
-    e.preventDefault();
-    if (GS === 'play') {
-      pauseGame();
-      return;
-    }
-    if (GS === 'paused') {
-      resumeGame();
-      return;
-    }
-    if (GS === 'over' || GS === 'title') {
-      goToMenu();
-      return;
-    }
-    if (document.getElementById('hsp').classList.contains('open')) {
-      document.getElementById('hsp').classList.remove('open');
-      return;
-    }
-  }
-  if (e.code === 'Space' || e.code === 'Enter') {
-    e.preventDefault();
-    if (GS === 'play') doLaunch();
-    else if (GS === 'paused') resumeGame();
-    else beginFromCurrentScreen();
-  }
-  if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
-    if (routeChoice && GS === 'play' && !PL.fly) {
-      e.preventDefault();
-      setRouteSelection(0);
-    }
-  }
-  if (e.code === 'ArrowRight' || e.code === 'KeyD') {
-    if (routeChoice && GS === 'play' && !PL.fly) {
-      e.preventDefault();
-      setRouteSelection(1);
-    }
-  }
-  if (e.code === 'KeyR') {
-    e.preventDefault();
-    quickRestart();
-  }
-});
-
-function showHS() {
-  updateHighScorePanel();
-  document.getElementById('hsp').classList.add('open');
-}
-document.getElementById('b-play').addEventListener('click', () => { Music.unlock(); beginFromCurrentScreen(); });
-document.getElementById('b-retry').addEventListener('click', () => { Music.unlock(); beginFromCurrentScreen(); });
-document.getElementById('b-menu').addEventListener('click', goToMenu);
-document.getElementById('b-resume').addEventListener('click', resumeGame);
-document.getElementById('b-pause-menu').addEventListener('click', goToMenu);
-document.getElementById('b-hs1').addEventListener('click', showHS);
-document.getElementById('b-hs2').addEventListener('click', showHS);
-document.getElementById('hs-x').addEventListener('click', () => document.getElementById('hsp').classList.remove('open'));
-document.getElementById('touch-pause').addEventListener('pointerdown', e => {
-  e.preventDefault();
-  e.stopPropagation();
-});
-document.getElementById('touch-restart').addEventListener('pointerdown', e => {
-  e.preventDefault();
-  e.stopPropagation();
-});
-document.getElementById('touch-pause').addEventListener('click', e => {
-  e.preventDefault();
-  e.stopPropagation();
-  Music.unlock();
-  if (GS === 'play') pauseGame();
-  else if (GS === 'paused') resumeGame();
-  else beginFromCurrentScreen();
-});
-document.getElementById('touch-restart').addEventListener('click', e => {
-  e.preventDefault();
-  e.stopPropagation();
-  Music.unlock();
-  quickRestart();
-});
-document.querySelectorAll('.gfx-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    save.graphics = btn.dataset.gfx;
-    persist();
-    applyGraphicsSetting(save.graphics);
-    updateGraphicsButtons();
-  });
-});
-document.querySelectorAll('.mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    save.launchMode = btn.dataset.mode;
-    persist();
-    updateModeButtons();
-    updateStatusHUD();
-  });
-});
-
-function tickFrame(dt, fixed = false) {
-  update(dt);
-  if (GS === 'play' && !PL.fly && comboTimer > 0) {
-    comboTimer = Math.max(0, comboTimer - comboDecay());
-    if (comboTimer === 0) handleComboTimeout();
-  }
-  Music.tick();
-  if (!fixed) draw();
-}
-
-(function loop(now) {
-  requestAnimationFrame(loop);
-  if (!lastNow) lastNow = now;
-  const dt = Math.min(.033, (now - lastNow) / 1000 || 1 / 60);
-  lastNow = now;
-  tickFrame(dt);
-})();
-</script>
-</body>
-</html>
+document.addEventListener
