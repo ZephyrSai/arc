@@ -171,6 +171,11 @@ const cv = document.getElementById('cv');
 const cx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 let lastNow = 0;
+let simAccumulator = 0;
+let renderAlpha = 0;
+let simTime = 0;
+const SIM_DT = 1 / 60;
+const MAX_SIM_STEPS = 5;
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 const GRAPHICS_CONFIG = {
   minimal: { label:'Minimal', maxDpr:1, stars:110, dust:0, trail:10, ringBlur:0, starGlow:false, nodeGlow:false, screenPulse:false, dustFx:false, cloudFx:false, particleScale:.42, planetLite:true },
@@ -178,9 +183,9 @@ const GRAPHICS_CONFIG = {
   medium: { label:'Medium', maxDpr:1.6, stars:230, dust:3, trail:20, ringBlur:4, starGlow:true, nodeGlow:true, screenPulse:false, dustFx:true, cloudFx:true, particleScale:.8, planetLite:false },
   high: { label:'High', maxDpr:2, stars:300, dust:5, trail:28, ringBlur:8, starGlow:true, nodeGlow:true, screenPulse:true, dustFx:true, cloudFx:true, particleScale:1, planetLite:false }
 };
-const PERF = { ...GRAPHICS_CONFIG.medium };
+const PERF = { ...GRAPHICS_CONFIG.high };
 function applyGraphicsSetting(setting) {
-  const key = GRAPHICS_CONFIG[setting] ? setting : 'medium';
+  const key = GRAPHICS_CONFIG[setting] ? setting : 'high';
   Object.assign(PERF, GRAPHICS_CONFIG[key]);
   resize();
 }
@@ -209,8 +214,8 @@ save.best = save.best || 0;
 save.scores = save.scores || [];
 save.daily = save.daily || {};
 save.launchMode = save.launchMode || 'medium';
-save.graphics = save.graphics || (IS_TOUCH ? 'low' : 'high');
-if (!GRAPHICS_CONFIG[save.graphics]) save.graphics = IS_TOUCH ? 'low' : 'high';
+save.graphics = save.graphics || 'high';
+if (!GRAPHICS_CONFIG[save.graphics]) save.graphics = 'high';
 function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(save)); } catch {}
 }
@@ -303,10 +308,11 @@ let routeChoice = null;
 let hudFrame = 0;
 let failTimeout = 0;
 
-const CAM = { x:0, y:0, tx:0, ty:0 };
+const CAM = { x:0, y:0, px:0, py:0, tx:0, ty:0 };
+const PRESENT = { playerX:0, playerY:0, ready:false };
 const PL = {
-  x:0, y:0, vx:0, vy:0, r:9, col:'#a78bff', trail:[], fly:false, spin:0,
-  settle:0, settleV:0, orbitOffset:0, orbitOffsetV:0, release:0
+  x:0, y:0, px:0, py:0, vx:0, vy:0, r:9, col:'#a78bff', trail:[], fly:false, spin:0, pspin:0,
+  settle:0, pSettle:0, settleV:0, orbitOffset:0, pOrbitOffset:0, orbitOffsetV:0, release:0
 };
 const pool = [];
 let pidx = 0;
@@ -504,8 +510,8 @@ function nodeParams(sc) {
   let dist = relief ? mn * (.32 + Math.random() * .12) : mn * (.4 + d * .15 + Math.random() * .12);
   if (RUN.variant === 'prism drift') dist *= 1.08;
   if (RUN.variant === 'solar lash') dist *= .96;
-  const spdBase = .026 + d * .04;
-  const spdMul = .9 + Math.random() * 1.02;
+  const spdBase = .041 + d * .05;
+  const spdMul = 1 + Math.random() * .92;
   const spd = spdBase * spdMul * (Math.random() < .5 ? 1 : -1);
   const launchBase = 6.9 + d * 2.8;
   const launchMul = 1 + Math.random() * .78;
@@ -542,12 +548,14 @@ function genNode(prev, sc, forcedDir = null) {
     x, y,
     r: p.r,
     angle: Math.random() * Math.PI * 2,
+    pAngle: 0,
     spd: p.spd,
     launch: p.launch,
     capArc: p.capArc,
     synced: p.synced,
     syncEase: p.syncEase,
     gateAngle: Math.random() * Math.PI * 2,
+    pGateAngle: 0,
     pal,
     pr: 7 + Math.random() * 4,
     relief: p.relief,
@@ -556,6 +564,7 @@ function genNode(prev, sc, forcedDir = null) {
     total: kindMeta.total || 1,
     bonusArc: p.capArc * .32,
     bonusAngle: Math.random() * Math.PI * 2,
+    pBonusAngle: 0,
     _tDir: 0
   };
   if (prev) {
@@ -574,6 +583,9 @@ function genNode(prev, sc, forcedDir = null) {
     node.synced = true;
     node.relief = true;
   }
+  node.pAngle = node.angle;
+  node.pGateAngle = node.gateAngle;
+  node.pBonusAngle = node.bonusAngle;
   return node;
 }
 
@@ -612,11 +624,15 @@ function setRouteSelection(index) {
 function snapToOrbit(n) {
   PL.x = n.x + Math.cos(n.angle) * n.r;
   PL.y = n.y + Math.sin(n.angle) * n.r;
+  PL.px = PL.x;
+  PL.py = PL.y;
   PL.vx = 0;
   PL.vy = 0;
   PL.settle = 0;
+  PL.pSettle = 0;
   PL.settleV = 0;
   PL.orbitOffset = 0;
+  PL.pOrbitOffset = 0;
   PL.orbitOffsetV = 0;
   PL.release = 0;
   PL.fly = false;
@@ -627,13 +643,15 @@ function updateCam() {
   const cur = pool[pidx];
   const nxt = getNextNode();
   if (!cur) return;
+  CAM.px = CAM.x;
+  CAM.py = CAM.y;
   const mix = PL.fly && nxt ? .68 : .5;
   const fx = nxt ? cur.x * (1 - mix) + nxt.x * mix : cur.x;
   const fy = nxt ? cur.y * (1 - mix) + nxt.y * mix : cur.y;
   CAM.tx = W / 2 - fx;
   CAM.ty = H / 2 - fy;
-  CAM.x += (CAM.tx - CAM.x) * .05;
-  CAM.y += (CAM.ty - CAM.y) * .05;
+  CAM.x += (CAM.tx - CAM.x) * .12;
+  CAM.y += (CAM.ty - CAM.y) * .12;
 }
 
 function burst(x, y, col, n, spd) {
@@ -655,6 +673,10 @@ function burst(x, y, col, n, spd) {
 }
 function addRing(x, y, r0, col, lw, spd, fade) {
   rings.push({ x, y, r: r0, col, lw, spd, life: 1, d: fade });
+}
+const delayedRings = [];
+function addDelayedRing(delayMs, x, y, r0, col, lw, spd, fade) {
+  delayedRings.push({ t: delayMs / 1000, x, y, r0, col, lw, spd, fade });
 }
 function addFloat(x, y, txt, col, size = 15) {
   floats.push({ x, y, txt, col, life: 1, vy: -1.25, size });
@@ -686,10 +708,42 @@ function alphaHex(hex, alpha) {
 }
 function sceneBreathStrength() {
   const feverAmt = Math.min(1, RUN.feverTimer / 420);
-  return (.35 + AUDIO_REACT.wave * .4 + AUDIO_REACT.beat * .25 + Math.min(combo, 8) * .045 + feverAmt * .2) * .85;
+  return (.2 + AUDIO_REACT.wave * .14 + AUDIO_REACT.beat * .09 + Math.min(combo, 8) * .018 + feverAmt * .08) * .44;
+}
+function updateEffects(dt) {
+  const step = dt * 60;
+  simTime += dt;
+  bgTick += dt * .21;
+  if (shake > 0) shake = Math.max(0, shake - .085 * step);
+  if (comboLossFlash > 0) comboLossFlash = Math.max(0, comboLossFlash - .04 * step);
+  if (failAnim > 0) failAnim = Math.max(0, failAnim - .038 * step);
+  for (let i = delayedRings.length - 1; i >= 0; i--) {
+    delayedRings[i].t -= dt;
+    if (delayedRings[i].t <= 0) {
+      const r = delayedRings[i];
+      addRing(r.x, r.y, r.r0, r.col, r.lw, r.spd, r.fade);
+      delayedRings.splice(i, 1);
+    }
+  }
+  rings = rings.filter(r => {
+    r.r += r.spd * step;
+    r.life -= r.d * step;
+    return r.life > 0;
+  });
+  parts = parts.filter(p => {
+    p.x += p.vx * step;
+    p.y += p.vy * step;
+    p.vy += .07 * step;
+    p.life -= p.d * step;
+    return p.life > 0;
+  });
+  floats = floats.filter(f => {
+    f.y += f.vy * step;
+    f.life -= .022 * step;
+    return f.life > 0;
+  });
 }
 function drawBg() {
-  bgTick += .0035;
   const cur = pool[pidx];
   const nxt = getNextNode();
   const baseA = cur?.pal?.[2] || '#081228';
@@ -701,6 +755,7 @@ function drawBg() {
   const speed = Math.min(1, Math.hypot(vx, vy) / 9);
   const feverAmt = Math.min(1, RUN.feverTimer / 420);
   const breathe = sceneBreathStrength();
+  const gfxMix = PERF.stars / GRAPHICS_CONFIG.high.stars;
 
   const bg = cx.createLinearGradient(0, 0, W, H);
   bg.addColorStop(0, '#000106');
@@ -747,18 +802,21 @@ function drawBg() {
 
   for (let i = 0; i < PERF.stars; i++) {
     const s = STARS[i];
-    s.tw += s.ts;
-    const twinkle = .24 + .58 * Math.abs(Math.sin(s.tw + bgTick * (1 + s.layer * .32)));
+    const twinklePhase = s.tw + simTime * (1.1 + s.ts * 140);
+    const twinkle = (.28 + .68 * Math.abs(Math.sin(twinklePhase))) * (.72 + gfxMix * .42);
     const layer = STAR_LAYERS[s.layer];
     let px = ((s.lx + CAM.x * layer - vx * (12 + s.layer * 7)) % W + W) % W;
     let py = ((s.ly + CAM.y * layer - vy * (12 + s.layer * 7)) % H + H) % H;
     const dx = px - W * .5;
     const dy = py - H * .5;
     const dist = Math.hypot(dx, dy) || 1;
-    const driftPulse = 1 + Math.sin(bgTick * 18 - dist * .006) * (.0018 + breathe * .0032);
+    const driftAmp = gfxMix >= .95 ? (.001 + breathe * .0019) :
+      gfxMix >= .7 ? (.00045 + breathe * .00095) :
+      gfxMix >= .5 ? (.00016 + breathe * .0003) : 0;
+    const driftPulse = 1 + Math.sin(bgTick * 14 - dist * .0042) * driftAmp;
     px = W * .5 + dx * driftPulse;
     py = H * .5 + dy * driftPulse;
-    const streak = speed * (s.layer / STAR_LAYERS.length) * 24;
+    const streak = gfxMix >= .9 ? speed * (s.layer / STAR_LAYERS.length) * 18 : 0;
     const bright = s.hot || s.r > 1.3 || i % 15 === 0;
     if (streak > 1.5) {
       cx.save();
@@ -769,17 +827,17 @@ function drawBg() {
         cx.shadowBlur = s.hot ? 11 + s.r * 4 : 4 + s.r;
         cx.shadowColor = s.hot ? `hsla(${s.hue}, 90%, 72%, .85)` : 'rgba(255,255,255,.72)';
       }
-      cx.fillStyle = s.hot ? `hsla(${s.hue}, 90%, 82%, ${.72 + twinkle * .28})` : `rgba(255,255,255,${.52 + twinkle * .42})`;
+      cx.fillStyle = s.hot ? `hsla(${s.hue}, 90%, 82%, ${.76 + twinkle * .32})` : `rgba(255,255,255,${.6 + twinkle * .44})`;
       cx.fillRect(-s.r * .5, -s.r * .5, streak + s.r, s.r);
       if (bright && i % 15 === 0) {
         cx.globalAlpha = .14 + twinkle * .2;
         cx.fillRect(-s.r * 2.4, -s.r * .2, s.r * 4.8 + streak * .3, s.r * .4);
       }
       cx.restore();
-      return;
+      continue;
     }
     cx.globalAlpha = twinkle;
-    cx.fillStyle = s.hot ? `hsla(${s.hue}, 90%, 82%, ${.72 + twinkle * .28})` : `rgba(255,255,255,${.52 + twinkle * .42})`;
+    cx.fillStyle = s.hot ? `hsla(${s.hue}, 90%, 82%, ${.76 + twinkle * .32})` : `rgba(255,255,255,${.6 + twinkle * .44})`;
     if (bright && PERF.starGlow) {
       cx.save();
       cx.shadowBlur = s.hot ? 11 + s.r * 4 : 4 + s.r;
@@ -793,13 +851,13 @@ function drawBg() {
         cx.fillRect(px - s.r * .2, py - s.r * 2.2, s.r * .4, s.r * 4.4);
       }
       cx.restore();
-      return;
+      continue;
     }
     cx.fillRect(px, py, Math.max(1, s.r), Math.max(1, s.r));
   }
 
   cx.save();
-  cx.fillStyle = `rgba(0,0,0,${.26 - feverAmt * .04})`;
+  cx.fillStyle = `rgba(0,0,0,${.34 - gfxMix * .14 - feverAmt * .04})`;
   cx.fillRect(0, 0, W, H);
   cx.restore();
 
@@ -867,12 +925,13 @@ function drawStarShape(x, y, r, col, a = 1, rot = 0) {
   cx.restore();
 }
 function drawPlanet(x, y, r, col, a = 1) {
+  const spin = lerpAngle(PL.pspin ?? PL.spin, PL.spin, renderAlpha);
   if (PERF.planetLite) {
     C(x, y, r * 1.02, col, a * .22);
     C(x, y, r, col, a);
     cx.save();
     cx.translate(x, y);
-    cx.rotate(PL.spin);
+    cx.rotate(spin);
     cx.globalAlpha = a * .64;
     cx.fillStyle = 'rgba(255,255,255,.72)';
     cx.beginPath();
@@ -904,7 +963,7 @@ function drawPlanet(x, y, r, col, a = 1) {
   C(x, y, r, col, a, 26);
   cx.save();
   cx.translate(x, y);
-  cx.rotate(PL.spin);
+  cx.rotate(spin);
   cx.globalAlpha = a * .68;
   cx.fillStyle = 'rgba(255,255,255,.86)';
   cx.beginPath();
@@ -933,7 +992,7 @@ function drawPlanet(x, y, r, col, a = 1) {
   cx.arc(0, 0, r * .98, -.2, Math.PI * 1.26);
   cx.stroke();
   if (PLAYER.shield) {
-    cx.globalAlpha = .5 + .1 * Math.sin(performance.now() * .012);
+    cx.globalAlpha = .5 + .1 * Math.sin(simTime * 12);
     cx.strokeStyle = '#7fdcff';
     cx.shadowColor = '#7fdcff';
     cx.shadowBlur = 20;
@@ -944,13 +1003,54 @@ function drawPlanet(x, y, r, col, a = 1) {
   }
   cx.restore();
 }
+function drawPlanetMotionBlur(x, y, r, col) {
+  if (!PRESENT.ready) return;
+  const dx = x - PRESENT.playerX;
+  const dy = y - PRESENT.playerY;
+  const dist = Math.hypot(dx, dy);
+  if (dist < .5) return;
+  const steps = Math.min(4, Math.max(2, Math.round(dist / 10)));
+  for (let i = 1; i <= steps; i++) {
+    const t = i / (steps + 1);
+    const gx = lerp(PRESENT.playerX, x, t);
+    const gy = lerp(PRESENT.playerY, y, t);
+    const fade = (1 - t) * (.08 + Math.min(.08, dist * .006));
+    C(gx, gy, r * (1 - t * .18), col, fade, PERF.planetLite ? 0 : 10);
+  }
+}
 
 function zoneCenter(n) {
-  return n.synced ? n.gateAngle : Math.atan2(PL.y - n.y, PL.x - n.x);
+  const gateAngle = lerpAngle(n.pGateAngle ?? n.gateAngle, n.gateAngle, renderAlpha);
+  const { x:px, y:py } = renderPlayerState();
+  return n.synced ? gateAngle : Math.atan2(py - n.y, px - n.x);
+}
+function renderPlayerState() {
+  if (!PL.fly) {
+    const cur = pool[pidx];
+    if (cur) {
+      const orbitAngle = lerpAngle(
+        (cur.pAngle ?? cur.angle) + (PL.pOrbitOffset ?? PL.orbitOffset),
+        cur.angle + PL.orbitOffset,
+        renderAlpha
+      );
+      const orbitRadius = lerp(cur.r + (PL.pSettle ?? PL.settle), cur.r + PL.settle, renderAlpha);
+      return {
+        x: cur.x + Math.cos(orbitAngle) * orbitRadius,
+        y: cur.y + Math.sin(orbitAngle) * orbitRadius
+      };
+    }
+  }
+  return {
+    x: lerp(PL.px ?? PL.x, PL.x, renderAlpha),
+    y: lerp(PL.py ?? PL.y, PL.y, renderAlpha)
+  };
 }
 function drawNode(n, role, routeLabel = '') {
   const alpha = [1, .66, .18][role];
   const [c0, c1, c2] = n.pal;
+  const angle = lerpAngle(n.pAngle ?? n.angle, n.angle, renderAlpha);
+  const gateAngle = lerpAngle(n.pGateAngle ?? n.gateAngle, n.gateAngle, renderAlpha);
+  const bonusAngle = lerpAngle(n.pBonusAngle ?? n.bonusAngle, n.bonusAngle, renderAlpha);
   if (role === 0) {
     if (PERF.nodeGlow) {
       const ng = cx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r * 3.8);
@@ -972,12 +1072,12 @@ function drawNode(n, role, routeLabel = '') {
   A(n.x, n.y, n.r, '#ffffff', role === 0 ? .7 : .5, alpha * .36, 0, Math.PI * 2, dash);
   if (role < 2) A(n.x, n.y, n.r + 4, c0, role === 0 ? 1.2 : .9, alpha * .34, 0, Math.PI * 2, []);
   if (n.kind === 'boss') A(n.x, n.y, n.r + 9, '#ffd86e', 2.2, alpha * .7, 0, Math.PI * 2, [2, 6]);
-  C(n.x, n.y, role === 0 ? 4.4 + Math.sin(performance.now() * .003) * 1.3 : 3.2, c0, alpha * .92, role === 0 ? 16 : 6);
+  C(n.x, n.y, role === 0 ? 4.4 + Math.sin(simTime * 3) * 1.3 : 3.2, c0, alpha * .92, role === 0 ? 16 : 6);
   C(n.x, n.y, 1.8, '#fff', alpha * .44);
 
   if (role === 1) {
     const centre = zoneCenter(n);
-    const pulse = .28 + .12 * Math.sin(performance.now() * .006);
+    const pulse = .28 + .12 * Math.sin(simTime * 6);
     const assist = currentMode();
     if (assist.cloudAlpha > 0 && PERF.cloudFx) {
       const cloudR = n.r + assist.catchBuffer;
@@ -1022,7 +1122,7 @@ function drawNode(n, role, routeLabel = '') {
       cx.restore();
 
     if (n.kind !== 'normal') {
-      const bonusCentre = n.synced ? n.bonusAngle : centre;
+      const bonusCentre = n.synced ? bonusAngle : centre;
       cx.save();
       cx.globalAlpha = .38 + pulse * .26;
       cx.strokeStyle = n.kind === 'gate' ? '#ffd86e' : n.kind === 'shield' ? '#7fdcff' : n.kind === 'fever' ? '#ff9dc8' : '#ffe8aa';
@@ -1092,7 +1192,7 @@ function drawNode(n, role, routeLabel = '') {
   if (role === 0 && combo > 1 && comboTimer > 0 && !PL.fly) {
     const ratio = Math.min(1, comboTimer / COMBO_TIMER_BASE);
     cx.save();
-    cx.globalAlpha = .24 + (.3 + .18 * Math.sin(performance.now() * .01)) * .2;
+    cx.globalAlpha = .24 + (.3 + .18 * Math.sin(simTime * 10)) * .2;
     if (PERF.nodeGlow) {
       cx.shadowColor = '#ff486d';
       cx.shadowBlur = 14;
@@ -1107,22 +1207,25 @@ function drawNode(n, role, routeLabel = '') {
 }
 
 function draw() {
+  const camX = lerp(CAM.px ?? CAM.x, CAM.x, renderAlpha);
+  const camY = lerp(CAM.py ?? CAM.y, CAM.y, renderAlpha);
+  const { x:playerX, y:playerY } = renderPlayerState();
   cx.save();
   cx.scale(DPR, DPR);
   if (PERF.screenPulse) {
-    const depthPulse = 1 + sceneBreathStrength() * .0065;
+    const depthPulse = 1 + sceneBreathStrength() * .0018;
     cx.translate(W * .5, H * .5);
     cx.scale(depthPulse, depthPulse);
     cx.translate(-W * .5, -H * .5);
   }
-  const sx = shake > 0 ? (Math.random() - .5) * shake * 7 : 0;
-  const sy = shake > 0 ? (Math.random() - .5) * shake * 7 : 0;
+  const sx = shake > 0 ? Math.sin(simTime * 26) * shake * 1.5 : 0;
+  const sy = shake > 0 ? Math.cos(simTime * 21) * shake * 1.2 : 0;
   cx.translate(sx, sy);
   drawBg();
 
   if (GS === 'play' || GS === 'dying' || GS === 'paused') {
     cx.save();
-    cx.translate(CAM.x, CAM.y);
+    cx.translate(camX, camY);
     for (let ri = 2; ri >= 0; ri--) {
       const node = pool[pidx + ri];
       if (node) drawNode(node, ri);
@@ -1130,18 +1233,13 @@ function draw() {
     if (routeChoice && getAltNode()) drawNode(getAltNode(), 2, 'B');
     if (routeChoice && getNextNode()) drawNode(getNextNode(), 1, 'A');
 
-    rings = rings.filter(r => {
-      r.r += r.spd;
-      r.life -= r.d;
-      if (r.life <= 0) return false;
-      A(r.x, r.y, r.r, r.col, r.lw, r.life * .76);
-      return true;
-    });
+    for (const r of rings) {
+      if (r.life > 0) A(r.x, r.y, r.r, r.col, r.lw, r.life * .76);
+    }
 
     if (failAnim > 0) {
       const c = pool[pidx];
       if (c) A(c.x, c.y, c.r + failAnim * 40, '#ff2244', 2.5, failAnim * .65);
-      failAnim = Math.max(0, failAnim - .038);
     }
 
     PL.trail.forEach((t, i) => {
@@ -1149,29 +1247,31 @@ function draw() {
       const r = PL.r * (1 - i / PL.trail.length) * .65;
       if (r > .3) C(t.x, t.y, r, PL.col, a);
     });
-    drawPlanet(PL.x, PL.y, PL.r, PL.col);
+    drawPlanetMotionBlur(playerX, playerY, PL.r, PL.col);
+    drawPlanet(playerX, playerY, PL.r, PL.col);
 
     if (!PL.fly && (GS === 'play' || GS === 'paused')) {
       const n = pool[pidx];
       if (n) {
+        const orbitAngle = lerpAngle(n.pAngle ?? n.angle, n.angle, renderAlpha);
         const dir = n.spd > 0 ? 1 : -1;
-        const tx = -Math.sin(n.angle) * dir;
-        const ty = Math.cos(n.angle) * dir;
+        const tx = -Math.sin(orbitAngle) * dir;
+        const ty = Math.cos(orbitAngle) * dir;
         const len = currentMode().pointer;
-        const ax = PL.x + tx * len;
-        const ay = PL.y + ty * len;
+        const ax = playerX + tx * len;
+        const ay = playerY + ty * len;
         cx.save();
-        cx.globalAlpha = .22 + .1 * Math.sin(performance.now() * .0055);
+        cx.globalAlpha = .22 + .1 * Math.sin(simTime * 5.5);
         cx.setLineDash([3, 4]);
         cx.strokeStyle = PL.col;
         cx.lineWidth = 1.5;
         cx.lineCap = 'round';
         cx.beginPath();
-        cx.moveTo(PL.x, PL.y);
+        cx.moveTo(playerX, playerY);
         cx.lineTo(ax, ay);
         cx.stroke();
         cx.setLineDash([]);
-        const ha = Math.atan2(ay - PL.y, ax - PL.x);
+        const ha = Math.atan2(ay - playerY, ax - playerX);
         cx.beginPath();
         cx.moveTo(ax, ay);
         cx.lineTo(ax - Math.cos(ha - .42) * 8, ay - Math.sin(ha - .42) * 8);
@@ -1182,20 +1282,13 @@ function draw() {
       }
     }
 
-    parts = parts.filter(p => {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += .07;
-      p.life -= p.d;
-      if (p.life <= 0) return false;
+    for (const p of parts) {
+      if (p.life <= 0) continue;
       if (p.star) drawStarShape(p.x, p.y, p.r * p.life, p.col, p.life * .9, p.life * 6);
       else C(p.x, p.y, p.r * Math.max(.1, p.life), p.col, p.life * .85, PERF.planetLite ? 0 : 5);
-      return true;
-    });
-    floats = floats.filter(f => {
-      f.y += f.vy;
-      f.life -= .022;
-      if (f.life <= 0) return false;
+    }
+    for (const f of floats) {
+      if (f.life <= 0) continue;
       cx.save();
       cx.globalAlpha = f.life;
       cx.fillStyle = f.col;
@@ -1208,11 +1301,13 @@ function draw() {
       }
       cx.fillText(f.txt, f.x, f.y);
       cx.restore();
-      return true;
-    });
+    }
     cx.restore();
   }
   cx.restore();
+  PRESENT.playerX = playerX;
+  PRESENT.playerY = playerY;
+  PRESENT.ready = true;
 }
 
 function angleDiff(a, b) {
@@ -1220,6 +1315,12 @@ function angleDiff(a, b) {
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
   return d;
+}
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+function lerpAngle(a, b, t) {
+  return a + angleDiff(b, a) * t;
 }
 function clamp(v, mn, mx) {
   return Math.max(mn, Math.min(mx, v));
@@ -1330,7 +1431,7 @@ function loseCombo() {
   comboTimer = combo > 1 ? COMBO_TIMER_BASE : 0;
   comboLossFlash = 1;
   orbTimer = 0;
-  shake = Math.max(shake, .35);
+  shake = Math.max(shake, .18);
   addRing(PL.x, PL.y, PL.r * 1.25, '#ff486d', 2.8, 3.8, .03);
   addFloat(PL.x, PL.y - PL.r - 20, combo > 1 ? `CHAIN DOWN ×${combo}` : 'COMBO LOST', '#ff486d');
   const el = document.getElementById('combo-el');
@@ -1354,8 +1455,8 @@ function handleOrbitTimeout() {
 
 function consumeShield(reason) {
   PLAYER.shield = 0;
-  comboLossFlash = .6;
-  shake = .6;
+  comboLossFlash = .38;
+  shake = .24;
   PL.fly = false;
   snapToOrbit(pool[pidx]);
   orbTimer = 0;
@@ -1458,14 +1559,14 @@ function doCapture(nxt, quality, hitAngle) {
   PL.vx = 0;
   PL.vy = 0;
   PL.release = 0;
-  PL.settle = clamp(-incomingRadial * .95, -14, 14);
-  PL.settleV = clamp(-incomingRadial * .24, -5.4, 5.4);
-  PL.orbitOffset = clamp((incomingDot / Math.max(42, nxt.r)) * .06, -.24, .24);
-  PL.orbitOffsetV = clamp((incomingDot / Math.max(42, nxt.r)) * .022, -.048, .048);
+  PL.settle = clamp(-incomingRadial * .72, -10.5, 10.5);
+  PL.settleV = clamp(-incomingRadial * .18, -3.4, 3.4);
+  PL.orbitOffset = clamp((incomingDot / Math.max(42, nxt.r)) * .042, -.16, .16);
+  PL.orbitOffsetV = clamp((incomingDot / Math.max(42, nxt.r)) * .015, -.032, .032);
 
   addRing(nxt.x, nxt.y, nxt.r * .6, nxt.pal[0], 3.5, 4.5, .027);
   addRing(nxt.x, nxt.y, nxt.r * .25, '#fff', 2.0, 2.8, .04);
-  setTimeout(() => addRing(nxt.x, nxt.y, nxt.r * .4, nxt.pal[0], 2, 5.5, .03), 65);
+  addDelayedRing(65, nxt.x, nxt.y, nxt.r * .4, nxt.pal[0], 2, 5.5, .03);
   burst(PL.x, PL.y, nxt.pal[0], 28, 5.5);
   burst(nxt.x, nxt.y, '#fff', 12, 3.5);
 
@@ -1507,7 +1608,7 @@ function doFail(reason = 'miss') {
   combo = 0;
   comboTimer = 0;
   comboLossFlash = 0;
-  shake = 1;
+  shake = .42;
   failAnim = 1;
   RUN.feverTimer = 0;
   burst(PL.x, PL.y, '#ff2244', 32, 5);
@@ -1525,8 +1626,12 @@ function doFail(reason = 'miss') {
 function update(dt) {
   if (GS !== 'play' && GS !== 'dying' && GS !== 'paused') return;
   if (GS === 'paused') return;
-  if (shake > 0) shake = Math.max(0, shake - .05);
-  if (comboLossFlash > 0) comboLossFlash = Math.max(0, comboLossFlash - .04);
+  updateEffects(dt);
+  PL.px = PL.x;
+  PL.py = PL.y;
+  PL.pspin = PL.spin;
+  PL.pSettle = PL.settle;
+  PL.pOrbitOffset = PL.orbitOffset;
   if (RUN.feverTimer > 0 && GS === 'play') {
     RUN.feverTimer = Math.max(0, RUN.feverTimer - dt * 60);
     if (RUN.feverTimer === 0) Music.onFeverEnd();
@@ -1542,15 +1647,18 @@ function update(dt) {
   const cur = pool[pidx];
   const nxt = getNextNode();
   pool.forEach(n => {
+    n.pAngle = n.angle;
+    n.pGateAngle = n.gateAngle;
+    n.pBonusAngle = n.bonusAngle;
     n.angle += n.spd;
     n.gateAngle += n.spd;
     n.bonusAngle += n.spd * 1.25;
   });
 
   if (!PL.fly) {
-    PL.settleV += (-PL.settle * .16 - PL.settleV * .15);
+    PL.settleV += (-PL.settle * .18 - PL.settleV * .19);
     PL.settle += PL.settleV;
-    PL.orbitOffsetV += (-PL.orbitOffset * .14 - PL.orbitOffsetV * .18);
+    PL.orbitOffsetV += (-PL.orbitOffset * .16 - PL.orbitOffsetV * .18);
     PL.orbitOffset += PL.orbitOffsetV;
     if (Math.abs(PL.settle) < .02 && Math.abs(PL.settleV) < .02) {
       PL.settle = 0;
@@ -1564,12 +1672,12 @@ function update(dt) {
     const orbitAngle = cur.angle + PL.orbitOffset;
     PL.x = cur.x + Math.cos(orbitAngle) * orbitRadius;
     PL.y = cur.y + Math.sin(orbitAngle) * orbitRadius;
-    PL.spin += .12;
+    PL.spin += .08;
     PL.trail = [];
     orbTimer++;
     if (orbTimer > timeout() + 20) handleOrbitTimeout();
   } else {
-    PL.release = Math.max(0, PL.release - .07);
+    PL.release = Math.max(0, PL.release - .07 * dt * 60);
     if (nxt) {
       const dx = nxt.x - PL.x;
       const dy = nxt.y - PL.y;
@@ -1588,7 +1696,7 @@ function update(dt) {
     }
     PL.x += PL.vx;
     PL.y += PL.vy;
-    PL.spin += .24;
+    PL.spin += .18;
     PL.trail.unshift({ x: PL.x, y: PL.y });
     if (PL.trail.length > PERF.trail) PL.trail.pop();
 
@@ -1640,10 +1748,15 @@ function renderGameToText() {
 }
 window.render_game_to_text = renderGameToText;
 window.advanceTime = ms => {
-  const steps = Math.max(1, Math.round(ms / (1000 / 60)));
+  const steps = Math.max(1, Math.round(ms / (SIM_DT * 1000)));
   for (let i = 0; i < steps; i++) {
-    tickFrame(1 / 60, true);
+    update(SIM_DT);
+    if (GS === 'play' && !PL.fly && comboTimer > 0) {
+      comboTimer = Math.max(0, comboTimer - comboDecay());
+      if (comboTimer === 0) handleComboTimeout();
+    }
   }
+  renderAlpha = 1;
   draw();
 };
 
@@ -1925,6 +2038,11 @@ function showGameOver() {
 function startGame() {
   clearTimeout(failTimeout);
   failTimeout = 0;
+  simAccumulator = 0;
+  renderAlpha = 1;
+  simTime = 0;
+  bgTick = 0;
+  PRESENT.ready = false;
   score = 0;
   hintDone = false;
   combo = 0;
@@ -1938,6 +2056,7 @@ function startGame() {
   parts = [];
   floats = [];
   rings = [];
+  delayedRings.length = 0;
   pidx = 0;
   pool.length = 0;
   paletteQueue = [];
@@ -1957,6 +2076,8 @@ function startGame() {
   PL.r = n0.pr;
   CAM.x = CAM.tx = W / 2 - n0.x;
   CAM.y = CAM.ty = H / 2 - n0.y;
+  CAM.px = CAM.x;
+  CAM.py = CAM.y;
   document.getElementById('hint').classList.remove('gone');
   document.getElementById('sc-num').textContent = '0';
   document.getElementById('best-num').textContent = save.best;
@@ -2118,13 +2239,30 @@ updateModeButtons();
 updateGraphicsButtons();
 
 function tickFrame(dt, fixed = false) {
-  update(dt);
-  if (GS === 'play' && !PL.fly && comboTimer > 0) {
-    comboTimer = Math.max(0, comboTimer - comboDecay());
-    if (comboTimer === 0) handleComboTimeout();
+  if (fixed) {
+    update(SIM_DT);
+    if (GS === 'play' && !PL.fly && comboTimer > 0) {
+      comboTimer = Math.max(0, comboTimer - comboDecay());
+      if (comboTimer === 0) handleComboTimeout();
+    }
+    Music.tick();
+    renderAlpha = 1;
+    return;
   }
+  simAccumulator = Math.min(simAccumulator + dt, SIM_DT * MAX_SIM_STEPS);
+  let steps = 0;
+  while (simAccumulator >= SIM_DT && steps < MAX_SIM_STEPS) {
+    update(SIM_DT);
+    if (GS === 'play' && !PL.fly && comboTimer > 0) {
+      comboTimer = Math.max(0, comboTimer - comboDecay());
+      if (comboTimer === 0) handleComboTimeout();
+    }
+    simAccumulator -= SIM_DT;
+    steps++;
+  }
+  renderAlpha = SIM_DT > 0 ? 1 - simAccumulator / SIM_DT : 1;
   Music.tick();
-  if (!fixed) draw();
+  draw();
 }
 
 (function loop(now) {
