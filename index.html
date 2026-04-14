@@ -40,6 +40,7 @@ canvas{display:block;position:fixed;inset:0}
 
 .scr{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(3,4,14,.88);z-index:30;backdrop-filter:blur(16px);transition:opacity .3s;padding:24px;text-align:center}
 .scr.off{display:none}
+.scr.tutorial{background:rgba(2,4,14,.76);justify-content:flex-end;padding:24px 24px max(28px,env(safe-area-inset-bottom))}
 .logo{font-size:clamp(2.9rem,9vw,5.4rem);font-weight:700;letter-spacing:-3px;line-height:.9;margin-bottom:.16em;background:linear-gradient(135deg,#a78bff 0%,#60c5ff 46%,#ff7eb3 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .tag{font-size:.64rem;letter-spacing:.26em;text-transform:uppercase;opacity:.32;margin-bottom:1.6rem}
 .subtag{font-size:.82rem;max-width:520px;line-height:1.55;opacity:.74;margin-bottom:2rem}
@@ -62,6 +63,12 @@ canvas{display:block;position:fixed;inset:0}
 .ov-best{font-size:.8rem;color:#ffd86e;font-weight:600;min-height:1.4em;margin-bottom:1rem}
 .ov-meta{font-size:.78rem;line-height:1.55;opacity:.72;max-width:420px;margin-bottom:1.7rem}
 .ov-key{font-size:.6rem;letter-spacing:.1em;opacity:.22;margin-top:.8rem}
+.tutorial-card{width:min(560px,94vw);padding:18px 18px 16px;border:1px solid rgba(255,255,255,.12);border-radius:22px;background:rgba(6,9,25,.76);backdrop-filter:blur(18px);box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:left}
+.tutorial-k{font-size:.58rem;letter-spacing:.18em;text-transform:uppercase;opacity:.42}
+.tutorial-title{font-size:clamp(1.3rem,4vw,2rem);font-weight:700;letter-spacing:-.03em;margin-top:6px}
+.tutorial-body{font-size:.9rem;line-height:1.58;opacity:.84;margin-top:10px}
+.tutorial-meta{font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;opacity:.36;margin-top:12px}
+.tutorial-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px}
 #hsp{position:fixed;bottom:0;left:0;right:0;background:rgba(4,5,20,.97);border-top:1px solid rgba(255,255,255,.07);padding:20px 22px 28px;z-index:40;transform:translateY(100%);transition:transform .32s cubic-bezier(.22,1,.36,1)}
 #hsp.open{transform:translateY(0)}
 #hsp h3{font-size:.56rem;letter-spacing:.2em;text-transform:uppercase;opacity:.28;margin-bottom:14px}
@@ -108,7 +115,7 @@ canvas{display:block;position:fixed;inset:0}
       <div class="pill" id="mode-pill">Mode Medium ×1.25</div>
     </div>
   </div>
-  <div id="hint">Tap · Space · Enter to launch</div>
+  <div id="hint">Tap target ring · Space · Enter to launch</div>
   <div id="route-hint">Arrow Left / Right · A / D to pick a route</div>
   <div id="combo-el"></div>
   <div id="key-hint">Space / Enter — start or launch<br>Left / Right — route choice<br>R — instant restart</div>
@@ -158,6 +165,19 @@ canvas{display:block;position:fixed;inset:0}
   <div class="ov-meta">Press <strong>Esc</strong>, <strong>Space</strong>, or <strong>Enter</strong> to resume. Use menu to leave the run.</div>
   <button class="btn bp" id="b-resume">Resume</button>
   <button class="btn bg" id="b-pause-menu">Menu</button>
+</div>
+
+<div class="scr tutorial off" id="s-tutorial">
+  <div class="tutorial-card">
+    <div class="tutorial-k" id="tutorial-step">Step 1 / 2</div>
+    <div class="tutorial-title" id="tutorial-title">Catch the next orbit.</div>
+    <div class="tutorial-body" id="tutorial-body"></div>
+    <div class="tutorial-meta" id="tutorial-meta"></div>
+    <div class="tutorial-actions">
+      <button class="btn bg" id="tutorial-skip">Skip</button>
+      <button class="btn bp" id="tutorial-next">Next</button>
+    </div>
+  </div>
 </div>
 
 <div id="hsp">
@@ -216,6 +236,7 @@ save.daily = save.daily || {};
 save.launchMode = save.launchMode || 'medium';
 save.graphics = save.graphics || 'high';
 if (!GRAPHICS_CONFIG[save.graphics]) save.graphics = 'high';
+save.tutorialSeen = !!save.tutorialSeen;
 function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(save)); } catch {}
 }
@@ -351,9 +372,28 @@ buildRunMeta();
 updateModeButtons();
 updateGraphicsButtons();
 if (IS_TOUCH) {
-  document.getElementById('hint').textContent = 'Tap to launch';
-  document.getElementById('route-hint').textContent = 'Tap left or right half to pick a route';
+  document.getElementById('hint').textContent = 'Tap target ring to launch';
+  document.getElementById('route-hint').textContent = 'Tap the route ring you want';
 }
+
+const TUTORIAL = {
+  active:false,
+  step:0,
+  steps: [
+    {
+      title:'Catch the next orbit.',
+      body: () => IS_TOUCH
+        ? 'Tap the glowing target ring you want to fly to. If two route rings appear, tap the exact ring you want and the launch will follow that path.'
+        : 'Press Space or Enter to launch. Stay aware of the next glowing ring and time your shot so the planet enters that orbit cleanly.'
+    },
+    {
+      title:'Keep the chain alive.',
+      body: () => IS_TOUCH
+        ? 'Landing cleanly builds combo, fever, and shield chances. If route forks appear, tap the visible A or B ring directly. Use Pause or Retry at the bottom any time.'
+        : 'Clean catches build combo, fever, and shield chances. Use Left/Right or A/D to choose route forks, Esc to pause, and R for an instant restart.'
+    }
+  ]
+};
 
 function missionStatusText() {
   if (!RUN.mission) return 'Stay moving.';
@@ -439,6 +479,31 @@ function updateGraphicsButtons() {
   });
 }
 
+function renderTutorialStep() {
+  const step = TUTORIAL.steps[TUTORIAL.step];
+  document.getElementById('tutorial-step').textContent = `Step ${TUTORIAL.step + 1} / ${TUTORIAL.steps.length}`;
+  document.getElementById('tutorial-title').textContent = step.title;
+  document.getElementById('tutorial-body').textContent = step.body();
+  document.getElementById('tutorial-meta').textContent = IS_TOUCH
+    ? 'Touch onboarding'
+    : 'Keyboard onboarding';
+  document.getElementById('tutorial-next').textContent = TUTORIAL.step === TUTORIAL.steps.length - 1 ? 'Start Run' : 'Next';
+}
+function closeTutorial(markSeen = true) {
+  TUTORIAL.active = false;
+  document.getElementById('s-tutorial').classList.add('off');
+  if (markSeen) {
+    save.tutorialSeen = true;
+    persist();
+  }
+}
+function showTutorial() {
+  TUTORIAL.active = true;
+  TUTORIAL.step = 0;
+  renderTutorialStep();
+  document.getElementById('s-tutorial').classList.remove('off');
+}
+
 function updateDailyBest() {
   RUN.dailyBest = Math.max(RUN.dailyBest, score);
   save.daily[RUN.dayKey] = { best: RUN.dailyBest };
@@ -448,7 +513,7 @@ function updateDailyBest() {
 }
 
 function pauseGame() {
-  if (GS !== 'play') return;
+  if (GS !== 'play' || TUTORIAL.active) return;
   GS = 'paused';
   document.getElementById('s-pause').classList.remove('off');
 }
@@ -462,8 +527,10 @@ function resumeGame() {
 function goToMenu() {
   document.getElementById('s-over').classList.add('off');
   document.getElementById('s-pause').classList.add('off');
+  document.getElementById('s-tutorial').classList.add('off');
   document.getElementById('hsp').classList.remove('open');
   document.getElementById('s-title').classList.remove('off');
+  TUTORIAL.active = false;
   GS = 'title';
   updateStatusHUD();
 }
@@ -2085,6 +2152,7 @@ function startGame() {
   updateStatusHUD();
   updateModeButtons();
   GS = 'play';
+  if (!save.tutorialSeen) showTutorial();
 }
 
 function quickRestart() {
@@ -2108,10 +2176,61 @@ function beginFromCurrentScreen() {
   }
 }
 
-function handlePointer(x) {
+function routeSelectionFromPointer(x, y) {
+  const camX = lerp(CAM.px ?? CAM.x, CAM.x, renderAlpha);
+  const camY = lerp(CAM.py ?? CAM.y, CAM.y, renderAlpha);
+  const aNode = getNextNode();
+  const bNode = getAltNode();
+  if (!aNode || !bNode) return x < W / 2 ? 0 : 1;
+  const ax = aNode.x + camX;
+  const ay = aNode.y + camY;
+  const bx = bNode.x + camX;
+  const by = bNode.y + camY;
+  const da = Math.hypot(x - ax, y - ay);
+  const db = Math.hypot(x - bx, y - by);
+  return da <= db ? 0 : 1;
+}
+
+function touchLaunchTarget(x, y) {
+  const camX = lerp(CAM.px ?? CAM.x, CAM.x, renderAlpha);
+  const camY = lerp(CAM.py ?? CAM.y, CAM.y, renderAlpha);
+  const candidates = [];
+  const next = getNextNode();
+  const alt = getAltNode();
+  if (next) candidates.push({ index:0, node:next });
+  if (routeChoice && alt) candidates.push({ index:1, node:alt });
+  let best = null;
+  for (const entry of candidates) {
+    const sx = entry.node.x + camX;
+    const sy = entry.node.y + camY;
+    const d = Math.hypot(x - sx, y - sy);
+    const band = Math.abs(d - entry.node.r);
+    const threshold = Math.max(22, entry.node.r * .42 + 14);
+    if (!best || band < best.band) best = { ...entry, band, threshold };
+  }
+  return best && best.band <= best.threshold ? best : null;
+}
+
+function handlePointer(x, y) {
   Music.unlock();
+  if (TUTORIAL.active) {
+    if (TUTORIAL.step < TUTORIAL.steps.length - 1) {
+      TUTORIAL.step++;
+      renderTutorialStep();
+    } else {
+      closeTutorial(true);
+    }
+    return;
+  }
+  if (GS === 'play' && IS_TOUCH && !PL.fly) {
+    const target = touchLaunchTarget(x, y);
+    if (!target) return;
+    if (routeChoice) setRouteSelection(target.index);
+    doLaunch();
+    return;
+  }
   if (GS === 'play' && routeChoice && !PL.fly) {
-    setRouteSelection(x < W / 2 ? 0 : 1);
+    setRouteSelection(routeSelectionFromPointer(x, y));
     if (IS_TOUCH) doLaunch();
     return;
   }
@@ -2120,7 +2239,7 @@ function handlePointer(x) {
 
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
-  handlePointer(e.clientX);
+  handlePointer(e.clientX, e.clientY);
 });
 function isInteractiveTarget(node) {
   return !!node?.closest?.('button, a, input, select, textarea, [data-allow-touch]');
@@ -2140,8 +2259,25 @@ window.addEventListener('orientationchange', () => {
     if (GS === 'play' || GS === 'paused' || GS === 'dying') updateCam();
   }, 120);
 });
-document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', e => {
   Music.unlock();
+  if (TUTORIAL.active) {
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      closeTutorial(true);
+      return;
+    }
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      if (TUTORIAL.step < TUTORIAL.steps.length - 1) {
+        TUTORIAL.step++;
+        renderTutorialStep();
+      } else {
+        closeTutorial(true);
+      }
+      return;
+    }
+  }
   if (e.code === 'Escape') {
     e.preventDefault();
     if (GS === 'play') {
@@ -2218,6 +2354,19 @@ document.getElementById('touch-restart').addEventListener('click', e => {
   e.stopPropagation();
   Music.unlock();
   quickRestart();
+});
+document.getElementById('tutorial-next').addEventListener('click', () => {
+  Music.unlock();
+  if (TUTORIAL.step < TUTORIAL.steps.length - 1) {
+    TUTORIAL.step++;
+    renderTutorialStep();
+  } else {
+    closeTutorial(true);
+  }
+});
+document.getElementById('tutorial-skip').addEventListener('click', () => {
+  Music.unlock();
+  closeTutorial(true);
 });
 document.querySelectorAll('.gfx-btn').forEach(btn => {
   btn.addEventListener('click', () => {
