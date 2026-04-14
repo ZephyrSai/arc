@@ -200,8 +200,8 @@ const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPo
 const GRAPHICS_CONFIG = {
   minimal: { label:'Minimal', maxDpr:1, stars:110, dust:0, trail:10, ringBlur:0, starGlow:false, nodeGlow:false, screenPulse:false, dustFx:false, cloudFx:false, particleScale:.42, planetLite:true },
   low: { label:'Low', maxDpr:1.2, stars:170, dust:1, trail:14, ringBlur:0, starGlow:false, nodeGlow:false, screenPulse:false, dustFx:false, cloudFx:false, particleScale:.58, planetLite:true },
-  medium: { label:'Medium', maxDpr:1.6, stars:230, dust:3, trail:20, ringBlur:4, starGlow:true, nodeGlow:true, screenPulse:false, dustFx:true, cloudFx:true, particleScale:.8, planetLite:false },
-  high: { label:'High', maxDpr:2, stars:300, dust:5, trail:28, ringBlur:8, starGlow:true, nodeGlow:true, screenPulse:true, dustFx:true, cloudFx:true, particleScale:1, planetLite:false }
+  medium: { label:'Medium', maxDpr:1.4, stars:210, dust:2, trail:18, ringBlur:3, starGlow:true, nodeGlow:true, screenPulse:false, dustFx:true, cloudFx:true, particleScale:.74, planetLite:false },
+  high: { label:'High', maxDpr:1.5, stars:230, dust:3, trail:20, ringBlur:5, starGlow:true, nodeGlow:true, screenPulse:true, dustFx:true, cloudFx:true, particleScale:.84, planetLite:false }
 };
 const PERF = { ...GRAPHICS_CONFIG.high };
 function applyGraphicsSetting(setting) {
@@ -243,9 +243,9 @@ function persist() {
 applyGraphicsSetting(save.graphics);
 
 const MODE_CONFIG = {
-  easy: { label:'Easy', pointer:78, scoreMult:0.9, catchBuffer:11, catchArc:.95, cloudAlpha:.14 },
-  medium: { label:'Medium', pointer:50, scoreMult:1.25, catchBuffer:5, catchArc:.38, cloudAlpha:.08 },
-  hard: { label:'Hard', pointer:22, scoreMult:1.7, catchBuffer:0, catchArc:0, cloudAlpha:0 }
+  easy: { label:'Easy', pointer:78, scoreMult:0.9, catchBuffer:14, catchArc:1.08, cloudAlpha:.16, orbitSpeed:.86 },
+  medium: { label:'Medium', pointer:50, scoreMult:1.25, catchBuffer:5, catchArc:.38, cloudAlpha:.08, orbitSpeed:1 },
+  hard: { label:'Hard', pointer:22, scoreMult:1.7, catchBuffer:0, catchArc:0, cloudAlpha:0, orbitSpeed:1.08 }
 };
 function currentMode() {
   return MODE_CONFIG[save.launchMode] || MODE_CONFIG.medium;
@@ -593,6 +593,7 @@ function nodeParams(sc) {
   const d = dif(sc);
   const mn = Math.min(W, H);
   const modeName = save.launchMode || 'medium';
+  const modeCfg = currentMode();
   const syncStart = modeName === 'easy' ? 34 : modeName === 'medium' ? 28 : 22;
   const beat = sc % 8;
   const relief = beat === 7;
@@ -604,7 +605,7 @@ function nodeParams(sc) {
   if (RUN.variant === 'solar lash') dist *= .96;
   const spdBase = .041 + d * .05;
   const spdMul = 1 + Math.random() * .92;
-  const spd = spdBase * spdMul * (Math.random() < .5 ? 1 : -1);
+  const spd = spdBase * spdMul * modeCfg.orbitSpeed * (Math.random() < .5 ? 1 : -1);
   const launchBase = 6.9 + d * 2.8;
   const launchMul = 1 + Math.random() * .78;
   const launch = launchBase * launchMul;
@@ -815,7 +816,7 @@ function alphaHex(hex, alpha) {
 }
 function sceneBreathStrength() {
   const feverAmt = Math.min(1, RUN.feverTimer / 420);
-  return (.2 + AUDIO_REACT.wave * .14 + AUDIO_REACT.beat * .09 + Math.min(combo, 8) * .018 + feverAmt * .08) * .44;
+  return (.2 + AUDIO_REACT.wave * .22 + AUDIO_REACT.beat * .16 + Math.min(combo, 8) * .02 + feverAmt * .1 + AUDIO_REACT.bass * .14) * .52;
 }
 function updateEffects(dt) {
   const step = dt * 60;
@@ -972,8 +973,8 @@ function drawBg() {
     cx.save();
     cx.globalCompositeOperation = 'screen';
     const pulseGlow = cx.createRadialGradient(W * .5, H * .5, 0, W * .5, H * .5, Math.max(W, H) * .9);
-    pulseGlow.addColorStop(0, `rgba(255,255,255,${.012 + breathe * .018})`);
-    pulseGlow.addColorStop(.45, `rgba(96,197,255,${.008 + breathe * .012})`);
+    pulseGlow.addColorStop(0, `rgba(255,255,255,${.018 + breathe * .028})`);
+    pulseGlow.addColorStop(.45, `rgba(96,197,255,${.012 + breathe * .02})`);
     pulseGlow.addColorStop(1, 'rgba(0,0,0,0)');
     cx.fillStyle = pulseGlow;
     cx.fillRect(0, 0, W, H);
@@ -1111,7 +1112,7 @@ function drawPlanet(x, y, r, col, a = 1) {
   cx.restore();
 }
 function drawPlanetMotionBlur(x, y, r, col) {
-  if (!PRESENT.ready) return;
+  if (!PRESENT.ready || save.graphics === 'high') return;
   const dx = x - PRESENT.playerX;
   const dy = y - PRESENT.playerY;
   const dist = Math.hypot(dx, dy);
@@ -2044,6 +2045,10 @@ const Music = (() => {
     amp.gain.exponentialRampToValueAtTime(.0001, when + dur);
     osc.connect(amp);
     amp.connect(target);
+    osc.onended = () => {
+      try { osc.disconnect(); } catch {}
+      try { amp.disconnect(); } catch {}
+    };
     osc.start(when);
     osc.stop(when + dur + .02);
   }
@@ -2062,6 +2067,11 @@ const Music = (() => {
     src.connect(filter);
     filter.connect(amp);
     amp.connect(target);
+    src.onended = () => {
+      try { src.disconnect(); } catch {}
+      try { filter.disconnect(); } catch {}
+      try { amp.disconnect(); } catch {}
+    };
     src.start(when);
     src.stop(when + dur);
   }
@@ -2115,8 +2125,23 @@ const Music = (() => {
     }
     AUDIO_REACT.beat *= .82;
   }
+  function resetForRun() {
+    if (!state.ctx) {
+      AUDIO_REACT.wave = 0;
+      AUDIO_REACT.beat = 0;
+      AUDIO_REACT.bass = 0;
+      return;
+    }
+    state.nextBeat = state.ctx.currentTime + .05;
+    state.step = 0;
+    state.chord = 0;
+    AUDIO_REACT.wave = 0;
+    AUDIO_REACT.beat = 0;
+    AUDIO_REACT.bass = 0;
+  }
   return {
     unlock,
+    resetForRun,
     onLaunch(meta) {
       unlock();
       if (!state.ctx) return;
@@ -2231,6 +2256,7 @@ function startGame() {
   pidx = 0;
   pool.length = 0;
   paletteQueue = [];
+  Music.resetForRun();
   Object.assign(PLAYER, { shield:0, perfects:0, nearMisses:0, riskHits:0, bossClears:0, routesTaken:0, perfectStreak:0, feverCharge:0 });
   RUN.feverTimer = 0;
   RUN.bossChainLeft = 0;
@@ -2521,7 +2547,7 @@ function tickFrame(dt, fixed = false) {
 (function loop(now) {
   requestAnimationFrame(loop);
   if (!lastNow) lastNow = now;
-  const dt = Math.min(.033, (now - lastNow) / 1000 || 1 / 60);
+  const dt = Math.min(.1, (now - lastNow) / 1000 || 1 / 60);
   lastNow = now;
   tickFrame(dt);
 })();
