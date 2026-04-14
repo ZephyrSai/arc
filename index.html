@@ -1157,11 +1157,11 @@ function drawNode(n, role, routeLabel = '', routeSelected = false) {
   C(n.x, n.y, role === 0 ? 4.4 + Math.sin(simTime * 3) * 1.3 : 3.2, c0, alpha * .92, role === 0 ? 16 : 6);
   C(n.x, n.y, 1.8, '#fff', alpha * .44);
 
-  if (role === 1) {
+  if (role === 1 || routeLabel) {
     const centre = zoneCenter(n);
     const pulse = .28 + .12 * Math.sin(simTime * 6);
     const assist = currentMode();
-    if (assist.cloudAlpha > 0 && PERF.cloudFx) {
+    if (role === 1 && assist.cloudAlpha > 0 && PERF.cloudFx) {
       const cloudR = n.r + assist.catchBuffer;
       const cloud = cx.createRadialGradient(n.x, n.y, Math.max(0, n.r - 4), n.x, n.y, cloudR + 8);
       cloud.addColorStop(0, 'rgba(0,0,0,0)');
@@ -1203,7 +1203,7 @@ function drawNode(n, role, routeLabel = '', routeSelected = false) {
       cx.stroke();
       cx.restore();
 
-    if (n.kind !== 'normal') {
+    if (role === 1 && n.kind !== 'normal') {
       const bonusCentre = n.synced ? bonusAngle : centre;
       cx.save();
       cx.globalAlpha = .38 + pulse * .26;
@@ -1220,16 +1220,18 @@ function drawNode(n, role, routeLabel = '', routeSelected = false) {
       cx.restore();
     }
 
-    const gx = n.x + Math.cos(centre) * n.r;
-    const gy = n.y + Math.sin(centre) * n.r;
-    C(gx, gy, n.pr * .8, c0, .2, PERF.planetLite ? 0 : 14);
-    C(gx, gy, n.pr * .44, '#fff', .14, PERF.planetLite ? 0 : 8);
+    if (role === 1) {
+      const gx = n.x + Math.cos(centre) * n.r;
+      const gy = n.y + Math.sin(centre) * n.r;
+      C(gx, gy, n.pr * .8, c0, .2, PERF.planetLite ? 0 : 14);
+      C(gx, gy, n.pr * .44, '#fff', .14, PERF.planetLite ? 0 : 8);
+    }
 
-    const label = n.kind === 'gate' ? 'RISK GATE' :
+    const label = role === 1 ? (n.kind === 'gate' ? 'RISK GATE' :
       n.kind === 'shield' ? 'SHIELD' :
       n.kind === 'fever' ? 'FEVER' :
       n.kind === 'boss' ? `BOSS ${n.stage}/${n.total}` :
-      n.relief ? 'RELIEF' : '';
+      n.relief ? 'RELIEF' : '') : '';
     if (label) {
       cx.save();
       cx.globalAlpha = .34;
@@ -1314,6 +1316,41 @@ function drawNode(n, role, routeLabel = '', routeSelected = false) {
   }
 }
 
+function drawRouteConnectors() {
+  if (!routeChoice) return;
+  const cur = pool[pidx];
+  const aNode = getNextNode();
+  const bNode = getAltNode();
+  if (!cur || !aNode || !bNode) return;
+  const routes = [
+    { node:aNode, selected:routeChoice.selected === 0, phase:0 },
+    { node:bNode, selected:routeChoice.selected === 1, phase:1.2 }
+  ];
+  for (const route of routes) {
+    const dx = route.node.x - cur.x;
+    const dy = route.node.y - cur.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const sx = cur.x + dx / d * (cur.r + 14);
+    const sy = cur.y + dy / d * (cur.r + 14);
+    const ex = route.node.x - dx / d * (route.node.r + 14);
+    const ey = route.node.y - dy / d * (route.node.r + 14);
+    const pulse = .58 + .2 * Math.sin(simTime * 7 + route.phase);
+    cx.save();
+    cx.globalAlpha = route.selected ? .34 + pulse * .16 : .14 + pulse * .08;
+    cx.strokeStyle = route.selected ? '#ffd86e' : 'rgba(165,230,255,.72)';
+    cx.lineWidth = route.selected ? 2.2 : 1.2;
+    cx.shadowColor = route.selected ? '#ffd86e' : '#8fe2ff';
+    cx.shadowBlur = route.selected ? 18 : 10;
+    cx.setLineDash(route.selected ? [12, 7] : [6, 10]);
+    cx.beginPath();
+    cx.moveTo(sx, sy);
+    cx.lineTo(ex, ey);
+    cx.stroke();
+    cx.setLineDash([]);
+    cx.restore();
+  }
+}
+
 function draw() {
   const camX = lerp(CAM.px ?? CAM.x, CAM.x, renderAlpha);
   const camY = lerp(CAM.py ?? CAM.y, CAM.y, renderAlpha);
@@ -1334,6 +1371,7 @@ function draw() {
   if (GS === 'play' || GS === 'dying' || GS === 'paused') {
     cx.save();
     cx.translate(camX, camY);
+    if (routeChoice) drawRouteConnectors();
     for (let ri = 2; ri >= 0; ri--) {
       const node = pool[pidx + ri];
       if (node) drawNode(node, ri);
