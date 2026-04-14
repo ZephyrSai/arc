@@ -45,10 +45,12 @@ canvas{display:block;position:fixed;inset:0}
 .subtag{font-size:.82rem;max-width:520px;line-height:1.55;opacity:.74;margin-bottom:2rem}
 .title-box{max-width:min(560px,90vw);padding:18px 20px;border:1px solid rgba(255,255,255,.08);border-radius:22px;background:rgba(8,10,26,.4);margin-bottom:1.5rem}
 .title-box strong{color:#ffd86e}
-.mode-row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:0 0 1.2rem}
+.mode-row,.gfx-row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:0 0 1.2rem}
 .mode-btn{padding:10px 18px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:rgba(255,255,255,.7);font:inherit;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;pointer-events:all;transition:border-color .14s,transform .12s,color .14s,box-shadow .14s}
-.mode-btn.active{border-color:rgba(96,197,255,.52);color:#fff;box-shadow:0 0 22px rgba(96,197,255,.14)}
+.mode-btn.active,.gfx-btn.active{border-color:rgba(96,197,255,.52);color:#fff;box-shadow:0 0 22px rgba(96,197,255,.14)}
 .mode-btn small{display:block;font-size:.56rem;letter-spacing:.04em;opacity:.66;margin-top:2px}
+.gfx-row{margin-top:-.4rem}
+.gfx-btn{padding:9px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:rgba(255,255,255,.7);font:inherit;font-size:.68rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;pointer-events:all;transition:border-color .14s,transform .12s,color .14s,box-shadow .14s}
 .btn{padding:13px 42px;border-radius:999px;font-family:inherit;font-size:.92rem;font-weight:700;letter-spacing:.04em;cursor:pointer;border:none;transition:transform .12s,box-shadow .14s,background .14s;color:inherit;pointer-events:all;margin:5px}
 .btn:active{transform:scale(.94)!important}
 .bp{background:#fff;color:#03030e}
@@ -128,6 +130,12 @@ canvas{display:block;position:fixed;inset:0}
     <button class="mode-btn" data-mode="medium">Medium<small>Mid guide · ×1.25</small></button>
     <button class="mode-btn" data-mode="hard">Hard<small>Short guide · ×1.7</small></button>
   </div>
+  <div class="gfx-row" id="gfx-row">
+    <button class="gfx-btn" data-gfx="minimal">Minimal</button>
+    <button class="gfx-btn" data-gfx="low">Low</button>
+    <button class="gfx-btn" data-gfx="medium">Medium</button>
+    <button class="gfx-btn" data-gfx="high">High</button>
+  </div>
   <button class="btn bp" id="b-play">Launch</button>
   <button class="btn bg" id="b-hs1">High Scores</button>
 </div>
@@ -164,56 +172,17 @@ const cx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 let lastNow = 0;
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
-const LOW_POWER = IS_TOUCH && (((navigator.hardwareConcurrency || 4) <= 6) || ((navigator.deviceMemory || 4) <= 4));
-const QUALITY_PROFILES = [
-  { maxDpr:2, stars:300, dust:5, trail:28, ringBlur:8, starGlow:true, nodeGlow:true, screenPulse:true, dustFx:true, cloudFx:true, particleScale:1 },
-  { maxDpr:1.6, stars:220, dust:3, trail:20, ringBlur:4, starGlow:true, nodeGlow:true, screenPulse:false, dustFx:true, cloudFx:true, particleScale:.78 },
-  { maxDpr:1.25, stars:160, dust:2, trail:14, ringBlur:0, starGlow:false, nodeGlow:false, screenPulse:false, dustFx:false, cloudFx:false, particleScale:.55 }
-];
-const PERF = { ...QUALITY_PROFILES[LOW_POWER ? 2 : 0] };
-const ADAPT = {
-  level: LOW_POWER ? 2 : 0,
-  sampleMs: 0,
-  frames: 0,
-  lowHits: 0,
-  highHits: 0,
-  enabled: IS_TOUCH
+const GRAPHICS_CONFIG = {
+  minimal: { label:'Minimal', maxDpr:1, stars:110, dust:0, trail:10, ringBlur:0, starGlow:false, nodeGlow:false, screenPulse:false, dustFx:false, cloudFx:false, particleScale:.42, planetLite:true },
+  low: { label:'Low', maxDpr:1.2, stars:170, dust:1, trail:14, ringBlur:0, starGlow:false, nodeGlow:false, screenPulse:false, dustFx:false, cloudFx:false, particleScale:.58, planetLite:true },
+  medium: { label:'Medium', maxDpr:1.6, stars:230, dust:3, trail:20, ringBlur:4, starGlow:true, nodeGlow:true, screenPulse:false, dustFx:true, cloudFx:true, particleScale:.8, planetLite:false },
+  high: { label:'High', maxDpr:2, stars:300, dust:5, trail:28, ringBlur:8, starGlow:true, nodeGlow:true, screenPulse:true, dustFx:true, cloudFx:true, particleScale:1, planetLite:false }
 };
-function applyQualityLevel(level) {
-  const next = Math.max(0, Math.min(QUALITY_PROFILES.length - 1, level));
-  ADAPT.level = next;
-  Object.assign(PERF, QUALITY_PROFILES[next]);
+const PERF = { ...GRAPHICS_CONFIG.medium };
+function applyGraphicsSetting(setting) {
+  const key = GRAPHICS_CONFIG[setting] ? setting : 'medium';
+  Object.assign(PERF, GRAPHICS_CONFIG[key]);
   resize();
-}
-function samplePerformance(dt) {
-  if (!ADAPT.enabled) return;
-  ADAPT.sampleMs += dt * 1000;
-  ADAPT.frames++;
-  if (ADAPT.sampleMs < 1800) return;
-  const fps = ADAPT.frames * 1000 / ADAPT.sampleMs;
-  const canDownshift = ADAPT.level < QUALITY_PROFILES.length - 1;
-  const canUpshift = ADAPT.level > (LOW_POWER ? 1 : 0);
-  if (fps < 50 && canDownshift) {
-    ADAPT.lowHits++;
-    ADAPT.highHits = 0;
-  } else if (fps > 57 && canUpshift) {
-    ADAPT.highHits++;
-    ADAPT.lowHits = 0;
-  } else {
-    ADAPT.lowHits = 0;
-    ADAPT.highHits = 0;
-  }
-  if (ADAPT.lowHits >= 2) {
-    applyQualityLevel(ADAPT.level + 1);
-    ADAPT.lowHits = 0;
-    ADAPT.highHits = 0;
-  } else if (ADAPT.highHits >= 3) {
-    applyQualityLevel(ADAPT.level - 1);
-    ADAPT.highHits = 0;
-    ADAPT.lowHits = 0;
-  }
-  ADAPT.sampleMs = 0;
-  ADAPT.frames = 0;
 }
 
 function resize() {
@@ -230,9 +199,6 @@ window.addEventListener('resize', () => {
   resize();
   if (GS === 'play' || GS === 'paused' || GS === 'dying') updateCam();
 });
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !IS_TOUCH && ADAPT.level !== 0) applyQualityLevel(0);
-});
 
 const STORAGE_KEY = 'sf7';
 let save = (() => {
@@ -243,9 +209,11 @@ save.best = save.best || 0;
 save.scores = save.scores || [];
 save.daily = save.daily || {};
 save.launchMode = save.launchMode || 'medium';
+save.graphics = save.graphics || (IS_TOUCH ? 'low' : 'high');
 function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(save)); } catch {}
 }
+applyGraphicsSetting(save.graphics);
 
 const MODE_CONFIG = {
   easy: { label:'Easy', pointer:78, scoreMult:0.9, catchBuffer:11, catchArc:.95, cloudAlpha:.14 },
@@ -374,6 +342,7 @@ function buildRunMeta() {
 }
 buildRunMeta();
 updateModeButtons();
+updateGraphicsButtons();
 if (IS_TOUCH) {
   document.getElementById('hint').textContent = 'Tap to launch';
   document.getElementById('route-hint').textContent = 'Tap left or right half to pick a route';
@@ -455,6 +424,11 @@ function updateStatusHUD(force = false) {
 function updateModeButtons() {
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mode === save.launchMode);
+  });
+}
+function updateGraphicsButtons() {
+  document.querySelectorAll('.gfx-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.gfx === save.graphics);
   });
 }
 
@@ -892,7 +866,7 @@ function drawStarShape(x, y, r, col, a = 1, rot = 0) {
   cx.restore();
 }
 function drawPlanet(x, y, r, col, a = 1) {
-  if (LOW_POWER) {
+  if (PERF.planetLite) {
     C(x, y, r * 1.02, col, a * .22);
     C(x, y, r, col, a);
     cx.save();
@@ -1065,8 +1039,8 @@ function drawNode(n, role, routeLabel = '') {
 
     const gx = n.x + Math.cos(centre) * n.r;
     const gy = n.y + Math.sin(centre) * n.r;
-    C(gx, gy, n.pr * .8, c0, .2, LOW_POWER ? 0 : 14);
-    C(gx, gy, n.pr * .44, '#fff', .14, LOW_POWER ? 0 : 8);
+    C(gx, gy, n.pr * .8, c0, .2, PERF.planetLite ? 0 : 14);
+    C(gx, gy, n.pr * .44, '#fff', .14, PERF.planetLite ? 0 : 8);
 
     const label = n.kind === 'gate' ? 'RISK GATE' :
       n.kind === 'shield' ? 'SHIELD' :
@@ -1214,7 +1188,7 @@ function draw() {
       p.life -= p.d;
       if (p.life <= 0) return false;
       if (p.star) drawStarShape(p.x, p.y, p.r * p.life, p.col, p.life * .9, p.life * 6);
-      else C(p.x, p.y, p.r * Math.max(.1, p.life), p.col, p.life * .85, LOW_POWER ? 0 : 5);
+      else C(p.x, p.y, p.r * Math.max(.1, p.life), p.col, p.life * .85, PERF.planetLite ? 0 : 5);
       return true;
     });
     floats = floats.filter(f => {
@@ -2123,6 +2097,14 @@ document.getElementById('touch-restart').addEventListener('click', e => {
   Music.unlock();
   quickRestart();
 });
+document.querySelectorAll('.gfx-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    save.graphics = btn.dataset.gfx;
+    persist();
+    applyGraphicsSetting(save.graphics);
+    updateGraphicsButtons();
+  });
+});
 document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     save.launchMode = btn.dataset.mode;
@@ -2139,7 +2121,6 @@ function tickFrame(dt, fixed = false) {
     if (comboTimer === 0) handleComboTimeout();
   }
   Music.tick();
-  samplePerformance(dt);
   if (!fixed) draw();
 }
 
