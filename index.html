@@ -375,7 +375,9 @@ updateModeButtons();
 updateGraphicsButtons();
 if (IS_TOUCH) {
   document.getElementById('hint').textContent = 'Tap target ring to launch';
-  document.getElementById('route-hint').textContent = 'Tap the left or right route ring you want';
+  document.getElementById('route-hint').textContent = 'Arrow auto-locks route · tap anywhere to launch';
+} else {
+  document.getElementById('route-hint').textContent = 'Arrow auto-locks route · Space or click to launch';
 }
 
 const TUTORIAL = {
@@ -483,9 +485,9 @@ function updateGraphicsButtons() {
 
 function routeEntries() {
   const entries = [];
-  const next = getNextNode();
+  const primary = getPrimaryNode();
   const alt = getAltNode();
-  if (next) entries.push({ index:0, node:next });
+  if (primary) entries.push({ index:0, node:primary });
   if (routeChoice && alt) entries.push({ index:1, node:alt });
   return entries;
 }
@@ -504,6 +506,37 @@ function routeIndexForDirection(direction) {
   const ordered = orderedRouteEntries();
   if (ordered.length < 2) return ordered[0]?.index ?? 0;
   return direction < 0 ? ordered[0].index : ordered[ordered.length - 1].index;
+}
+function autoRouteSelection() {
+  if (!routeChoice || PL.fly) return routeChoice?.selected ?? 0;
+  const cur = pool[pidx];
+  if (!cur) return routeChoice.selected;
+  const orbitAngle = cur.angle + PL.orbitOffset;
+  const dir = cur.spd > 0 ? 1 : -1;
+  const heading = Math.atan2(Math.cos(orbitAngle) * dir, -Math.sin(orbitAngle) * dir);
+  let bestIndex = routeChoice.selected;
+  let bestErr = Infinity;
+  const entries = routeEntries();
+  for (const entry of entries) {
+    const routeAngle = Math.atan2(entry.node.y - PL.y, entry.node.x - PL.x);
+    const err = Math.abs(angleDiff(routeAngle, heading));
+    if (err < bestErr) {
+      bestErr = err;
+      bestIndex = entry.index;
+    }
+  }
+  const cone = Math.PI / 6;
+  const holdCone = cone + Math.PI / 18;
+  if (bestErr <= cone) return bestIndex;
+  const currentEntry = entries.find(entry => entry.index === routeChoice.selected);
+  if (!currentEntry) return routeChoice.selected;
+  const currentAngle = Math.atan2(currentEntry.node.y - PL.y, currentEntry.node.x - PL.x);
+  const currentErr = Math.abs(angleDiff(currentAngle, heading));
+  return currentErr <= holdCone ? routeChoice.selected : bestIndex;
+}
+
+function getPrimaryNode() {
+  return routeChoice ? routeChoice.primary : pool[pidx + 1] || null;
 }
 
 function renderTutorialStep() {
@@ -696,7 +729,8 @@ function trimPoolWindow() {
   pidx -= drop;
 }
 function getNextNode() {
-  return pool[pidx + 1] || null;
+  if (!routeChoice) return pool[pidx + 1] || null;
+  return routeChoice.selected === 0 ? routeChoice.primary : routeChoice.alt;
 }
 function getAltNode() {
   return routeChoice ? routeChoice.alt : null;
@@ -711,29 +745,46 @@ function maybeSpawnRouteFork() {
   let alt = null;
   const minSiblingGap = active.r + Math.min(W, H) * .18;
   const minAltCurrentGap = current.r + Math.min(W, H) * .18;
+  const activeDx = active.x - current.x;
+  const activeDy = active.y - current.y;
+  const preferVerticalSplit = Math.abs(activeDy) >= Math.abs(activeDx);
+  const activeSide = preferVerticalSplit ? Math.sign(activeDy || 1) : Math.sign(activeDx || 1);
   for (let i = 0; i < 10; i++) {
     const candidate = genNode(current, score + 1.8, current._tDir + .8 + (Math.random() - .5) * .42);
     const gapToCurrent = Math.hypot(candidate.x - current.x, candidate.y - current.y);
     const gapToActive = Math.hypot(candidate.x - active.x, candidate.y - active.y);
-    if (gapToCurrent >= minAltCurrentGap && gapToActive >= minSiblingGap) {
+    const candidateSide = preferVerticalSplit
+      ? Math.sign((candidate.y - current.y) || -activeSide)
+      : Math.sign((candidate.x - current.x) || -activeSide);
+    const oppositeHalf = candidateSide !== activeSide;
+    if (gapToCurrent >= minAltCurrentGap && gapToActive >= minSiblingGap && oppositeHalf) {
       alt = candidate;
       break;
     }
   }
+  if (!alt) {
+    for (let i = 0; i < 6; i++) {
+      const candidate = genNode(current, score + 1.8, current._tDir + .8 + (Math.random() - .5) * .42);
+      const gapToCurrent = Math.hypot(candidate.x - current.x, candidate.y - current.y);
+      const gapToActive = Math.hypot(candidate.x - active.x, candidate.y - active.y);
+      if (gapToCurrent >= minAltCurrentGap && gapToActive >= minSiblingGap) {
+        alt = candidate;
+        break;
+      }
+    }
+  }
   if (!alt) return;
   routeChoice = {
+    primary: active,
     alt,
     selected: 0
   };
   updateStatusHUD();
 }
-function setRouteSelection(index) {
+function setRouteSelection(index, opts = {}) {
   if (!routeChoice || routeChoice.selected === index) return;
-  const currentNext = pool[pidx + 1];
-  pool[pidx + 1] = routeChoice.alt;
-  routeChoice.alt = currentNext;
   routeChoice.selected = index;
-  Music.onRoute(index);
+  if (!opts.silent) Music.onRoute(index);
   updateStatusHUD();
 }
 
@@ -761,9 +812,26 @@ function updateCam() {
   if (!cur) return;
   CAM.px = CAM.x;
   CAM.py = CAM.y;
-  const mix = PL.fly && nxt ? .68 : .5;
-  const fx = nxt ? cur.x * (1 - mix) + nxt.x * mix : cur.x;
-  const fy = nxt ? cur.y * (1 - mix) + nxt.y * mix : cur.y;
+  let fx = cur.x;
+  let fy = cur.y;
+  if (routeChoice && !PL.fly) {
+    const primary = getPrimaryNode();
+    const alt = getAltNode();
+    if (primary && alt) {
+      const selected = routeChoice.selected === 0 ? primary : alt;
+      const forkCx = (primary.x + alt.x) * .5;
+      const forkCy = (primary.y + alt.y) * .5;
+      const focusX = forkCx * .78 + selected.x * .22;
+      const focusY = forkCy * .78 + selected.y * .22;
+      const mix = .42;
+      fx = cur.x * (1 - mix) + focusX * mix;
+      fy = cur.y * (1 - mix) + focusY * mix;
+    }
+  } else if (nxt) {
+    const mix = PL.fly ? .68 : .5;
+    fx = cur.x * (1 - mix) + nxt.x * mix;
+    fy = cur.y * (1 - mix) + nxt.y * mix;
+  }
   CAM.tx = W / 2 - fx;
   CAM.ty = H / 2 - fy;
   CAM.x += (CAM.tx - CAM.x) * .12;
@@ -1350,7 +1418,7 @@ function drawNode(n, role, routeLabel = '', routeSelected = false) {
 function drawRouteConnectors() {
   if (!routeChoice) return;
   const cur = pool[pidx];
-  const aNode = getNextNode();
+  const aNode = getPrimaryNode();
   const bNode = getAltNode();
   if (!cur || !aNode || !bNode) return;
   const routes = [
@@ -1407,7 +1475,7 @@ function draw() {
       if (node) drawNode(node, ri);
     }
     if (routeChoice && getAltNode()) drawNode(getAltNode(), 2, routeGlyphForIndex(1), routeChoice.selected === 1);
-    if (routeChoice && getNextNode()) drawNode(getNextNode(), 1, routeGlyphForIndex(0), routeChoice.selected === 0);
+    if (routeChoice && getPrimaryNode()) drawNode(getPrimaryNode(), 1, routeGlyphForIndex(0), routeChoice.selected === 0);
 
     for (const r of rings) {
       if (r.life > 0) A(r.x, r.y, lerp(r.pr ?? r.r, r.r, renderAlpha), r.col, r.lw, r.life * .76);
@@ -1755,6 +1823,7 @@ function doCapture(nxt, quality, hitAngle) {
   burst(PL.x, PL.y, nxt.pal[0], 28, 5.5);
   burst(nxt.x, nxt.y, '#fff', 12, 3.5);
 
+  if (routeChoice && routeChoice.selected === 1) pool[pidx + 1] = routeChoice.alt;
   pidx++;
   const hadRoute = !!routeChoice;
   if (hadRoute && routeChoice.selected === 1) {
@@ -1874,6 +1943,7 @@ function update(dt) {
     const orbitAngle = cur.angle + PL.orbitOffset;
     PL.x = cur.x + Math.cos(orbitAngle) * orbitRadius;
     PL.y = cur.y + Math.sin(orbitAngle) * orbitRadius;
+    if (routeChoice) setRouteSelection(autoRouteSelection(), { silent:true });
     PL.spin += .08;
     PL.trail = [];
     orbTimer++;
@@ -2414,16 +2484,8 @@ function handlePointer(x, y) {
     }
     return;
   }
-  if (GS === 'play' && IS_TOUCH && !PL.fly) {
-    const target = touchLaunchTarget(x, y);
-    if (!target) return;
-    if (routeChoice) setRouteSelection(target.index);
+  if (GS === 'play' && !PL.fly) {
     doLaunch();
-    return;
-  }
-  if (GS === 'play' && routeChoice && !PL.fly) {
-    setRouteSelection(routeSelectionFromPointer(x, y));
-    if (IS_TOUCH) doLaunch();
     return;
   }
   if (GS === 'play') doLaunch();
