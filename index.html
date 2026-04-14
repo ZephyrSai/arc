@@ -2378,6 +2378,12 @@ function routeSelectionFromPointer(x, y) {
   return da <= db ? 0 : 1;
 }
 
+function touchTargetThreshold(node, routeMode = false) {
+  const base = routeMode ? 30 : 36;
+  const scale = routeMode ? .34 : .46;
+  return node.r + Math.max(base, node.r * scale);
+}
+
 function touchLaunchTarget(x, y) {
   const camX = lerp(CAM.px ?? CAM.x, CAM.x, renderAlpha);
   const camY = lerp(CAM.py ?? CAM.y, CAM.y, renderAlpha);
@@ -2391,11 +2397,10 @@ function touchLaunchTarget(x, y) {
     const sx = entry.node.x + camX;
     const sy = entry.node.y + camY;
     const d = Math.hypot(x - sx, y - sy);
-    const band = Math.abs(d - entry.node.r);
-    const threshold = Math.max(22, entry.node.r * .42 + 14);
-    if (!best || band < best.band) best = { ...entry, band, threshold };
+    const threshold = touchTargetThreshold(entry.node, !!routeChoice);
+    if (!best || d < best.d) best = { ...entry, d, threshold };
   }
-  return best && best.band <= best.threshold ? best : null;
+  return best && best.d <= best.threshold ? best : null;
 }
 
 function handlePointer(x, y) {
